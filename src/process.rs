@@ -7,6 +7,9 @@ static CPUSET_OK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 pub fn init_cpuset() {
     if !std::path::Path::new("/dev/cpuset").exists() { return; }
     let _ = fs::create_dir_all("/dev/cpuset/AppOpt");
+    // 写入所有可用 CPU 到根 cpuset
+    let present = std::fs::read_to_string("/sys/devices/system/cpu/present").unwrap_or_default();
+    let _ = fs::write("/dev/cpuset/AppOpt/cpus", present.trim().as_bytes());
     if let Ok(mems) = fs::read_to_string("/dev/cpuset/mems") {
         let _ = fs::write("/dev/cpuset/AppOpt/mems", mems.trim().as_bytes());
     }
