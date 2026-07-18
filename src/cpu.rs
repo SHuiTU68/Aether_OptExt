@@ -47,6 +47,22 @@ pub fn detect() -> (String, String, String) {
         }
     }
     cls.sort_by(|a, b| b.0.cmp(&a.0)); // 按频率降序
+    // 兜底: present > 检测到的核心数时，按 present 拆分 (离线大核)
+    if cls.len() < 2 {
+        let known: usize = cls.iter().map(|(_, c)| c.len()).sum();
+        let total: usize = present().split(|c| c == ',' || c == '-')
+            .filter_map(|s| s.parse::<usize>().ok()).last().unwrap_or(0) + 1;
+        if total > known && known > 0 {
+            let known_set: std::collections::HashSet<usize> =
+                cls.iter().flat_map(|(_, c)| c.iter()).cloned().collect();
+            let mut extra: Vec<usize> = (0..total).filter(|c| !known_set.contains(c)).collect();
+            if !extra.is_empty() {
+                let mut cur = cls.remove(0).1;
+                cls.push((1, extra));  // 未检测到的核作为大核
+                cls.push((0, cur));    // 已知核作为小核
+            }
+        }
+    }
     if cls.is_empty() { return ("0".into(), "0".into(), "1".into()); }
     let big = fmt_cpus(&cls[0].1);
     let little = fmt_cpus(&cls.last().unwrap().1);
