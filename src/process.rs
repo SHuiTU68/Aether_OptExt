@@ -36,11 +36,11 @@ fn cpuset_add(tid: i32, cpus: &str) {
 
 pub fn scan(rules: &[Rule], set: &HashSet<String>, wild: &[String]) -> Vec<(i32, String, Vec<(i32, String, String)>)> {
     let mut result = Vec::new();
-    let mut buf = [0i8; 8192];
-    let fd = unsafe { libc::open("/proc\0".as_ptr() as *const _, libc::O_RDONLY | libc::O_DIRECTORY) };
+    let mut buf = [0u8; 8192];
+    let fd = unsafe { libc::open(b"/proc\0".as_ptr() as *const _, libc::O_RDONLY | libc::O_DIRECTORY) };
     if fd < 0 { return result; }
     loop {
-        let n = unsafe { libc::syscall(libc::SYS_getdents64, fd, buf.as_mut_ptr(), buf.len()) };
+        let n = unsafe { libc::syscall(libc::SYS_getdents64, fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
         if n <= 0 { break; }
         let mut off = 0usize;
         while off < n as usize {
