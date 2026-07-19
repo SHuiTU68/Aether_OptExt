@@ -68,11 +68,11 @@ def package():
     prop = MODULE_DIR / "module.prop"
     prop.write_text(
         f"id=aether-optext\nname=Aether OptExt\nversion={ver}\nversionCode={vc}\nauthor=NetizenNemo\n"
-        "description=Aether OptExt - Android CPU affinity optimizer\n"
+        "description=Aether OptExt - Android CPU affinity optimizer (with WebUI)\n"
     )
 
     for f in MODULE_DIR.glob("**/*"):
-        if f.suffix in (".sh", ".prop", ".json", ".md") or f.name == "updater-script":
+        if f.suffix in (".sh", ".prop", ".json", ".md", ".html", ".css", ".js") or f.name == "updater-script":
             if fix_line_ending(f): info(f"换行符: {f.name}")
     with zipfile.ZipFile(MODULE_ZIP, "w", zipfile.ZIP_STORED) as z:
         for root, dirs, files in os.walk(MODULE_DIR):

@@ -4,193 +4,453 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Aether OptExt</title>
+<link rel="stylesheet" type="text/css" href="/internal/insets.css">
 <style>
+/* ============ HyperOS / miuix 视觉语言 ============ */
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
 :root {
-  --bg: #0f1419;
-  --surface: #1a1f26;
-  --surface-2: #232932;
-  --border: #2d3540;
-  --text: #e6e6e6;
-  --text-dim: #8a93a0;
-  --accent: #4cc4ff;
-  --accent-dim: #2a7ab0;
-  --green: #4caf50;
-  --red: #f44336;
-  --yellow: #ff9800;
-  --mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  --bg: #f5f6f8;
+  --bg-dark: #0b0e14;
+  --surface: rgba(255, 255, 255, 0.78);
+  --surface-solid: #ffffff;
+  --surface-2: rgba(0, 0, 0, 0.04);
+  --surface-3: rgba(0, 0, 0, 0.06);
+  --border: rgba(0, 0, 0, 0.06);
+  --text: #1a1a1a;
+  --text-dim: #8a8e99;
+  --text-3: #b0b3bb;
+  --accent: #3f8cff;
+  --accent-2: #4f8cff;
+  --accent-soft: rgba(63, 140, 255, 0.10);
+  --green: #34c759;
+  --red: #ff453a;
+  --yellow: #ff9f0a;
+  --orange: #ff9f0a;
+  --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, Consolas, monospace;
+  --r-card: 28px;
+  --r-md: 18px;
+  --r-sm: 12px;
+  --r-pill: 999px;
+  --blur: saturate(180%) blur(20px);
+  --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+  --shadow-press: 0 0 0 1px rgba(0,0,0,0.05), 0 2px 8px rgba(0,0,0,0.06);
 }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0e14;
+    --surface: rgba(28, 32, 40, 0.78);
+    --surface-solid: #161a22;
+    --surface-2: rgba(255, 255, 255, 0.04);
+    --surface-3: rgba(255, 255, 255, 0.07);
+    --border: rgba(255, 255, 255, 0.07);
+    --text: #f0f1f5;
+    --text-dim: #8e929b;
+    --text-3: #5a5e67;
+    --accent: #5a9cff;
+    --accent-soft: rgba(90, 156, 255, 0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+  }
+}
+
 html, body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, 'Segoe UI', Roboto, 'Noto Sans CJK SC', sans-serif;
-  font-size: 14px;
+  font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', 'Noto Sans CJK SC', Roboto, sans-serif;
+  font-size: 15px;
   line-height: 1.5;
   min-height: 100vh;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-font-smoothing: antialiased;
 }
-.app { max-width: 720px; margin: 0 auto; padding: 16px 16px 80px; }
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(60% 40% at 50% 0%, var(--accent-soft), transparent 70%),
+    var(--bg);
+  z-index: -1;
+}
+
+.app {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 12px 12px 100px;
+  padding-top: max(12px, env(safe-area-inset-top));
+  padding-bottom: max(100px, calc(100px + env(safe-area-inset-bottom)));
+}
+
+/* ============ Header (大标题 + 状态徽章) ============ */
 header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 0 16px; border-bottom: 1px solid var(--border); margin-bottom: 16px;
+  padding: 16px 4px 20px;
 }
-header h1 { font-size: 18px; font-weight: 600; letter-spacing: 0.3px; }
-header h1 span { color: var(--accent); }
-.status-pill {
-  font-size: 11px; padding: 4px 10px; border-radius: 12px;
-  font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+header h1 {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 4px;
 }
-.status-pill.running { background: rgba(76, 200, 76, 0.15); color: var(--green); border: 1px solid rgba(76, 200, 76, 0.4); }
-.status-pill.stopped { background: rgba(244, 67, 54, 0.15); color: var(--red); border: 1px solid rgba(244, 67, 54, 0.4); }
-.status-pill.unknown { background: rgba(255, 152, 0, 0.15); color: var(--yellow); border: 1px solid rgba(255, 152, 0, 0.4); }
+header h1 .accent { color: var(--accent); }
+header .sub {
+  font-size: 13px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 0 0 4px rgba(255, 159, 10, 0.18);
+  animation: pulse 2s infinite;
+}
+.status-dot.running { background: var(--green); box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.18); }
+.status-dot.stopped { background: var(--red); box-shadow: 0 0 0 4px rgba(255, 69, 58, 0.18); animation: none; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
+/* ============ Card (Squircle 风格大圆角卡片) ============ */
 .card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; padding: 14px; margin-bottom: 12px;
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-radius: var(--r-card);
+  padding: 18px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+  border: 0.5px solid var(--border);
 }
-.card h2 {
-  font-size: 12px; font-weight: 600; color: var(--text-dim);
-  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
-  display: flex; align-items: center; justify-content: space-between;
+.card .title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
+.card .title .ico {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 15px;
+}
+.card .title .ico svg { width: 18px; height: 18px; }
+
+/* ============ Key-Value ============ */
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; font-size: 14px; }
 .kv .k { color: var(--text-dim); }
-.kv .v { color: var(--text); font-family: var(--mono); word-break: break-all; }
+.kv .v { color: var(--text); font-family: var(--mono); font-size: 13px; word-break: break-all; text-align: right; }
+.kv .v.mono { font-family: var(--mono); }
 
-.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
-button {
-  background: var(--surface-2); color: var(--text);
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 9px 14px; font-size: 13px; font-weight: 500;
-  cursor: pointer; transition: all 0.15s; flex: 1; min-width: 80px;
+/* ============ Pill button group ============ */
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+button, .btn {
+  appearance: none;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 0;
+  border-radius: var(--r-pill);
+  padding: 11px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.12s, background 0.15s, opacity 0.15s;
+  flex: 1;
+  min-width: 88px;
+  font-family: inherit;
 }
-button:hover { background: var(--border); border-color: var(--accent-dim); }
-button:active { transform: scale(0.97); }
-button.primary { background: var(--accent-dim); border-color: var(--accent); color: white; }
-button.primary:hover { background: var(--accent); }
-button.danger { background: rgba(244, 67, 54, 0.15); border-color: rgba(244, 67, 54, 0.5); color: #ff6b5d; }
-button.danger:hover { background: rgba(244, 67, 54, 0.3); }
-button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:hover { background: var(--surface-3); }
+button:active { transform: scale(0.96); opacity: 0.85; }
+button.primary { background: var(--accent); color: white; }
+button.primary:hover { background: var(--accent-2); }
+button.danger { background: rgba(255, 69, 58, 0.10); color: var(--red); }
+button.danger:hover { background: rgba(255, 69, 58, 0.18); }
+button.ghost { background: transparent; color: var(--accent); padding-left: 8px; padding-right: 8px; min-width: 0; flex: 0 0 auto; }
+button:disabled { opacity: 0.4; pointer-events: none; }
 
+.icon-btn {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-2); border-radius: var(--r-pill);
+  border: 0; cursor: pointer; flex: 0 0 auto;
+  min-width: 0; padding: 0;
+}
+.icon-btn svg { width: 16px; height: 16px; color: var(--text); }
+
+/* ============ Textarea ============ */
 textarea {
-  width: 100%; background: var(--bg); color: var(--text);
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 10px; font-family: var(--mono); font-size: 12px;
-  resize: vertical; min-height: 280px; line-height: 1.45;
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 280px;
   tab-size: 2;
 }
-textarea:focus { outline: none; border-color: var(--accent); }
+textarea:focus { outline: none; border-color: var(--accent); background: var(--surface-solid); }
 
+/* ============ Log viewer ============ */
 .log-viewer {
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: 8px; padding: 10px; font-family: var(--mono);
-  font-size: 11px; line-height: 1.4; max-height: 360px;
-  overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 380px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
   color: var(--text-dim);
+  -webkit-overflow-scrolling: touch;
 }
 .log-viewer .line-info { color: var(--accent); }
-.log-viewer .line-err { color: #ff6b5d; }
-.log-viewer .line-panic { color: #ff9800; font-weight: 600; }
+.log-viewer .line-err { color: var(--red); }
+.log-viewer .line-panic { color: var(--orange); font-weight: 600; background: rgba(255, 159, 10, 0.08); padding: 0 4px; border-radius: 4px; }
 
+/* ============ Tabs (底部胶囊 segmented) ============ */
+.tabs-wrap {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 100;
+  width: calc(100% - 32px);
+  max-width: 600px;
+}
 .tabs {
-  display: flex; background: var(--surface); border: 1px solid var(--border);
-  border-radius: 10px; padding: 3px; margin-bottom: 12px;
+  display: flex;
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-radius: var(--r-pill);
+  padding: 4px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.04);
+  border: 0.5px solid var(--border);
 }
 .tabs button {
-  flex: 1; background: transparent; border: none; padding: 8px 12px;
-  font-size: 13px; font-weight: 500; color: var(--text-dim);
-  border-radius: 7px; min-width: 0;
+  flex: 1;
+  background: transparent;
+  border: 0;
+  padding: 9px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+  border-radius: var(--r-pill);
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
-.tabs button.active { background: var(--surface-2); color: var(--accent); }
+.tabs button svg { width: 16px; height: 16px; }
+.tabs button.active {
+  background: var(--accent);
+  color: white;
+  box-shadow: 0 2px 8px rgba(63, 140, 255, 0.4);
+}
 
+/* ============ Toast ============ */
 .toast {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-  background: var(--surface-2); color: var(--text); padding: 10px 20px;
-  border-radius: 24px; border: 1px solid var(--border);
-  font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-  z-index: 1000; opacity: 0; transition: opacity 0.2s, transform 0.2s;
+  position: fixed;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  background: rgba(0,0,0,0.85);
+  color: white;
+  padding: 10px 18px;
+  border-radius: var(--r-pill);
+  font-size: 13px;
+  z-index: 2000;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
   pointer-events: none;
+  max-width: 80%;
+  text-align: center;
 }
-.toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
-.toast.error { border-color: var(--red); color: #ff6b5d; }
-.toast.ok { border-color: var(--green); color: #6bd976; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-.tab-panel { display: none; }
+/* ============ Tab panels ============ */
+.tab-panel { display: none; animation: fade 0.2s; }
 .tab-panel.active { display: block; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-.loading { text-align: center; padding: 20px; color: var(--text-dim); font-size: 12px; }
-.muted { color: var(--text-dim); font-size: 11px; margin-top: 6px; }
-.empty { text-align: center; color: var(--text-dim); font-size: 12px; padding: 24px 8px; }
-.row-actions { display: flex; gap: 6px; margin-top: 10px; }
-.row-actions button { flex: 0 0 auto; min-width: 0; padding: 7px 10px; font-size: 12px; }
+.loading { text-align: center; padding: 20px; color: var(--text-dim); font-size: 13px; }
+.muted { color: var(--text-dim); font-size: 12px; margin-top: 8px; }
+.empty { text-align: center; color: var(--text-dim); font-size: 13px; padding: 20px 8px; }
+.row-actions { display: flex; gap: 8px; margin-top: 12px; }
+.row-actions button { flex: 0 0 auto; min-width: 0; padding: 9px 14px; font-size: 13px; }
+.row-actions button.flex { flex: 1; }
+
+/* ============ Rule list (状态页配置摘要) ============ */
+.rule-list { font-family: var(--mono); font-size: 12px; max-height: 180px; overflow-y: auto; }
+.rule-list .row {
+  padding: 8px 0;
+  border-bottom: 0.5px solid var(--border);
+  display: flex; justify-content: space-between; gap: 12px;
+}
+.rule-list .row:last-child { border-bottom: 0; }
+.rule-list .row .name { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-list .row .cpus {
+  color: var(--accent); background: var(--accent-soft);
+  padding: 1px 8px; border-radius: var(--r-pill); font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ============ Switch (HyperOS toggle) ============ */
+.switch { position: relative; display: inline-block; width: 44px; height: 26px; flex: 0 0 auto; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider {
+  position: absolute; cursor: pointer; inset: 0;
+  background: var(--surface-3); border-radius: var(--r-pill);
+  transition: 0.2s;
+}
+.switch .slider::before {
+  content: ''; position: absolute;
+  width: 22px; height: 22px; left: 2px; top: 2px;
+  background: white; border-radius: 50%;
+  transition: 0.2s;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+.switch input:checked + .slider { background: var(--green); }
+.switch input:checked + .slider::before { transform: translateX(18px); }
+
+/* ============ Misc ============ */
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border-radius: var(--r-pill);
+  margin-right: 4px;
+}
+.tag.ok { background: rgba(52, 199, 89, 0.12); color: var(--green); }
+.tag.warn { background: rgba(255, 159, 10, 0.12); color: var(--orange); }
+.tag.err { background: rgba(255, 69, 58, 0.12); color: var(--red); }
+code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); padding: 1px 6px; border-radius: 4px; color: var(--text-dim); }
+.pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; padding: 3px 10px;
+  background: var(--surface-2); color: var(--text-dim);
+  border-radius: var(--r-pill); font-weight: 500;
+}
+.pill.ok { background: rgba(52, 199, 89, 0.12); color: var(--green); }
+.pill.err { background: rgba(255, 69, 58, 0.12); color: var(--red); }
 </style>
 </head>
 <body>
 <div class="app">
   <header>
-    <h1>Aether <span>OptExt</span></h1>
-    <div id="statusPill" class="status-pill unknown">检测中</div>
+    <h1>Aether <span class="accent">OptExt</span></h1>
+    <div class="sub">
+      <span id="statusDot" class="status-dot"></span>
+      <span id="statusText">检测中…</span>
+      <span style="margin-left:auto;">
+        <span id="versionPill" class="pill">v?</span>
+      </span>
+    </div>
   </header>
 
-  <div class="tabs">
-    <button data-tab="status" class="active">状态</button>
-    <button data-tab="config">配置</button>
-    <button data-tab="log">日志</button>
-    <button data-tab="control">控制</button>
-  </div>
-
-  <!-- 状态 -->
+  <!-- 状态页 -->
   <div id="tab-status" class="tab-panel active">
     <div class="card">
-      <h2>运行状态 <button id="refreshStatus" style="flex:0 0 auto;min-width:0;padding:5px 10px;font-size:11px;">刷新</button></h2>
-      <div class="kv" id="statusKv">
+      <div class="title">
+        <span class="ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          运行状态
+        </span>
+        <button class="icon-btn" id="refreshStatus" title="刷新">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+      <div class="kv">
         <div class="k">进程</div><div class="v" id="kvProc">-</div>
         <div class="k">PID</div><div class="v" id="kvPid">-</div>
         <div class="k">运行时长</div><div class="v" id="kvUptime">-</div>
         <div class="k">CPU 拓扑</div><div class="v" id="kvTopo">-</div>
-        <div class="k">大核/小核</div><div class="v" id="kvCpu">-</div>
+        <div class="k">大核 / 小核</div><div class="v" id="kvCpu">-</div>
         <div class="k">规则数</div><div class="v" id="kvRules">-</div>
         <div class="k">eBPF</div><div class="v" id="kvBpf">-</div>
-        <div class="k">数据目录</div><div class="v">/data/adb/aether</div>
       </div>
     </div>
+
     <div class="card">
-      <h2>配置摘要</h2>
+      <div class="title"><span class="ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        配置摘要
+      </span><span class="pill" id="configStatusPill">未加载</span></div>
       <div id="configSummary"><div class="loading">加载中…</div></div>
     </div>
   </div>
 
-  <!-- 配置 -->
+  <!-- 配置页 -->
   <div id="tab-config" class="tab-panel">
     <div class="card">
-      <h2>threads.json <span class="muted" id="configMtime"></span></h2>
+      <div class="title">
+        <span class="ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+          threads.json
+        </span>
+        <span class="muted" id="configMtime" style="margin:0;"></span>
+      </div>
       <textarea id="configText" spellcheck="false" placeholder="加载中…"></textarea>
       <div class="row-actions">
-        <button id="loadConfig">重新加载</button>
-        <button id="validateConfig">校验 JSON</button>
-        <button id="saveConfig" class="primary">保存</button>
+        <button id="loadConfig" class="flex">重新加载</button>
+        <button id="validateConfig" class="flex">校验 JSON</button>
+        <button id="saveConfig" class="primary flex">保存并重启</button>
       </div>
-      <div class="muted">保存后会自动重启 aether-optext 服务以应用新配置。</div>
+      <div class="muted">保存后会自动重启服务以应用新配置。</div>
     </div>
+
     <div class="card">
-      <h2>自动分配缓存 <span class="muted">(threads_cache)</span></h2>
+      <div class="title"><span class="ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9c2.39 0 4.68.94 6.36 2.64"/><polyline points="21 3 21 9 15 9"/></svg>
+        自动分配缓存
+      </span><span class="pill" id="cachePill">0 条</span></div>
       <div id="cacheInfo"><div class="loading">加载中…</div></div>
       <div class="row-actions">
-        <button id="loadCache">查看内容</button>
-        <button id="clearCache" class="danger">清除缓存</button>
+        <button id="loadCache" class="flex">查看内容</button>
+        <button id="clearCache" class="danger flex">清除缓存</button>
       </div>
     </div>
   </div>
 
-  <!-- 日志 -->
+  <!-- 日志页 -->
   <div id="tab-log" class="tab-panel">
     <div class="card">
-      <h2>threads_log.txt
-        <span style="display:flex;gap:6px;align-items:center;">
-          <label class="muted" style="margin:0;"><input type="checkbox" id="autoScroll" checked> 自动滚动</label>
-          <button id="refreshLog" style="flex:0 0 auto;min-width:0;padding:5px 10px;font-size:11px;">刷新</button>
+      <div class="title">
+        <span class="ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>
+          threads_log.txt
         </span>
-      </h2>
+        <span style="display:flex;gap:6px;align-items:center;">
+          <label class="muted" style="margin:0;display:flex;align-items:center;gap:4px;font-size:12px;">
+            <input type="checkbox" id="autoScroll" checked style="margin:0;"> 自动滚动
+          </label>
+          <button class="icon-btn" id="refreshLog" title="刷新">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+        </span>
+      </div>
       <div id="logViewer" class="log-viewer"><div class="loading">加载中…</div></div>
       <div class="row-actions">
         <button id="clearLog" class="danger">清空日志</button>
@@ -198,72 +458,165 @@ textarea:focus { outline: none; border-color: var(--accent); }
     </div>
   </div>
 
-  <!-- 控制 -->
+  <!-- 控制页 -->
   <div id="tab-control" class="tab-panel">
     <div class="card">
-      <h2>服务控制</h2>
+      <div class="title"><span class="ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        服务控制
+      </span></div>
       <div class="btn-row">
         <button id="startSvc" class="primary">启动</button>
         <button id="stopSvc" class="danger">停止</button>
         <button id="restartSvc">重启</button>
       </div>
-      <div class="muted">启动命令: <code>sh /data/adb/modules/aether-optext/service.sh</code></div>
+      <div class="muted">路径: <code>/data/adb/modules/aether-optext/service.sh</code></div>
     </div>
+
     <div class="card">
-      <h2>Shell 命令 <span class="muted">(以 root 执行)</span></h2>
-      <textarea id="shellInput" spellcheck="false" rows="3" placeholder="例如:cat /data/adb/aether/threads.json | head" style="min-height:64px;"></textarea>
+      <div class="title"><span class="ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        Shell 命令
+      </span><span class="muted" style="margin:0;font-size:11px;">以 root 执行</span></div>
+      <textarea id="shellInput" spellcheck="false" placeholder="例如:cat /data/adb/aether/threads.json | head" style="min-height:64px;"></textarea>
       <div class="row-actions">
-        <button id="runShell">执行</button>
+        <button id="runShell" class="primary">执行</button>
         <button id="clearShell">清空</button>
       </div>
-      <pre id="shellOutput" class="log-viewer" style="margin-top:10px;display:none;"></pre>
+      <pre id="shellOutput" class="log-viewer" style="margin-top:12px;display:none;"></pre>
     </div>
+
     <div class="card">
-      <h2>关于</h2>
+      <div class="title"><span class="ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        关于
+      </span></div>
       <div class="kv">
         <div class="k">模块</div><div class="v">Aether OptExt</div>
         <div class="k">作者</div><div class="v">NetizenNemo</div>
         <div class="k">数据目录</div><div class="v">/data/adb/aether</div>
         <div class="k">模块目录</div><div class="v">/data/adb/modules/aether-optext</div>
+        <div class="k">许可证</div><div class="v">GPL-3.0</div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- 底部 Tab 栏 -->
+<div class="tabs-wrap">
+  <div class="tabs">
+    <button data-tab="status" class="active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      状态
+    </button>
+    <button data-tab="config">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      配置
+    </button>
+    <button data-tab="log">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      日志
+    </button>
+    <button data-tab="control">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m11-7h-6m-6 0H1m17.5-7.5l-4.24 4.24m-4.52 4.52l-4.24 4.24m12.72 0l-4.24-4.24m-4.52-4.52L4.5 4.5"/></svg>
+      控制
+    </button>
   </div>
 </div>
 
 <div id="toast" class="toast"></div>
 
 <script>
-// ====== KernelSU / APatch / Magisk Delta WebUI API 封装 ======
+// ====================================================================
+//  KernelSU / APatch / Magisk Delta exec API — 兼容三种调用风格
+//    1. 新版 kernelsu@3.x:返回 Promise<{errno, stdout, stderr}>
+//    2. 中版同步:返回 {errno, stdout, stderr}
+//    3. 旧版 callback:ksu.exec(cmd, optsJson, callback)
+// ====================================================================
 const DATA_DIR = '/data/adb/aether';
 const MOD_DIR = '/data/adb/modules/aether-optext';
 const LOG_FILE = DATA_DIR + '/threads_log.txt';
 const CONFIG_FILE = DATA_DIR + '/threads.json';
 const CACHE_FILE = DATA_DIR + '/threads_cache';
 
-// exec: 兼容 Promise + callback 两种调用风格
 function exec(cmd, opts = {}) {
   return new Promise((resolve) => {
-    if (typeof ksu === 'undefined' || !ksu.exec) {
-      resolve({ errno: -1, stdout: '', stderr: 'ksu API 不可用 (需在 KernelSU/APatch/Magisk Delta 中打开)' });
+    const fallback = () => resolve({ errno: -1, stdout: '', stderr: 'ksu API 不可用 (需在 KernelSU/APatch/Magisk Delta 管理器中打开)' });
+
+    // 优先使用 ESM 风格的全局对象
+    const ksuObj = (typeof ksu !== 'undefined' && ksu) || (typeof kernelsu !== 'undefined' && kernelsu) || (typeof ksux !== 'undefined' && ksux);
+    if (!ksuObj || typeof ksuObj.exec !== 'function') {
+      fallback();
       return;
     }
-    let resolved = false;
-    try {
-      ksu.exec(cmd, JSON.stringify(opts), (stdout, stderr, exitCode) => {
-        if (resolved) return;
-        resolved = true;
-        resolve({ errno: exitCode, stdout: stdout || '', stderr: stderr || '' });
+
+    let settled = false;
+    const done = (r) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        errno: r.errno ?? r.exitCode ?? 0,
+        stdout: r.stdout ?? '',
+        stderr: r.stderr ?? '',
       });
+    };
+
+    try {
+      // 调用 1:Promise 风格 (kernelsu@3.x)
+      // exec(cmd) 或 exec(cmd, opts)
+      const ret = ksuObj.exec(cmd, opts);
+
+      if (ret && typeof ret.then === 'function') {
+        // Promise
+        ret.then(done).catch(e => done({ errno: -1, stdout: '', stderr: String(e) }));
+        return;
+      }
+      if (ret && typeof ret === 'object') {
+        // 同步返回对象
+        done(ret);
+        return;
+      }
+      if (typeof ret === 'string') {
+        // 有些实现返回 "errno\nstdout\nstderr" 格式
+        const parts = ret.split('\n');
+        done({ errno: parseInt(parts[0]) || 0, stdout: parts.slice(1).join('\n'), stderr: '' });
+        return;
+      }
+      // 调用 2:旧版 callback 风格 (传第 3 个参数 callback)
+      // 但上一行已经传了 2 个参数,这里没法再传 callback 了
+      // 所以这种情况下 ret === undefined,callback 会通过下方 setTimeout 触发
     } catch (e) {
-      resolve({ errno: -1, stdout: '', stderr: String(e) });
+      // 调用 2 (callback) 抛错时,试试 callback 风格
+      try {
+        ksuObj.exec(cmd, JSON.stringify(opts), (stdout, stderr, exitCode) => {
+          done({ errno: exitCode ?? 0, stdout: stdout || '', stderr: stderr || '' });
+        });
+        setTimeout(() => done({ errno: -1, stdout: '', stderr: '超时 (10s)' }), 10000);
+        return;
+      } catch (e2) {
+        done({ errno: -1, stdout: '', stderr: String(e2) });
+        return;
+      }
     }
-    // 5s 兜底
+
+    // 如果上面没 settle,试试 callback 风格 (KernelSU 老版本)
     setTimeout(() => {
-      if (!resolved) { resolved = true; resolve({ errno: -1, stdout: '', stderr: '超时' }); }
-    }, 5000);
+      if (settled) return;
+      try {
+        ksuObj.exec(cmd, JSON.stringify(opts), (stdout, stderr, exitCode) => {
+          done({ errno: exitCode ?? 0, stdout: stdout || '', stderr: stderr || '' });
+        });
+      } catch (e) {
+        done({ errno: -1, stdout: '', stderr: String(e) });
+      }
+      setTimeout(() => {
+        if (!settled) done({ errno: -1, stdout: '', stderr: '超时 (10s) — API 可能不支持' });
+      }, 10000);
+    }, 0);
   });
 }
 
+// 显示 toast
 function toast(msg, type = '') {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -271,7 +624,13 @@ function toast(msg, type = '') {
   setTimeout(() => { el.className = 'toast ' + type; }, 2200);
 }
 
-// ====== Tab 切换 ======
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ====================================================================
+//  Tab 切换
+// ====================================================================
 document.querySelectorAll('.tabs button').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
@@ -284,30 +643,39 @@ document.querySelectorAll('.tabs button').forEach(btn => {
   });
 });
 
-// ====== 状态 ======
+// ====================================================================
+//  状态页
+// ====================================================================
 async function loadStatus() {
-  const r = await exec('pidof aether-optext');
-  const pid = r.stdout.trim();
-  const running = !!pid;
-  const pill = document.getElementById('statusPill');
-  pill.className = 'status-pill ' + (running ? 'running' : 'stopped');
-  pill.textContent = running ? '运行中' : '已停止';
+  // 进程状态
+  const rPid = await exec('pidof aether-optext');
+  const pid = (rPid.stdout || '').trim().split(/\s+/)[0];
+  const running = !!pid && /^\d+$/.test(pid);
+
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+  dot.className = 'status-dot ' + (running ? 'running' : 'stopped');
+  txt.textContent = running ? '运行中' : '已停止';
+
   document.getElementById('kvProc').textContent = running ? 'aether-optext' : '-';
   document.getElementById('kvPid').textContent = pid || '-';
 
   if (running) {
-    const r2 = await exec(`cat /proc/${pid}/stat | awk '{print $22}'`);
-    const startTicks = parseInt(r2.stdout.trim());
+    // uptime: process start time from /proc/<pid>/stat field 22 (jiffies since boot)
+    const rStart = await exec(`cut -d' ' -f22 /proc/${pid}/stat`);
+    const startTicks = parseInt((rStart.stdout || '').trim());
     if (!isNaN(startTicks)) {
-      const r3 = await exec('getconf CLK_TCK');
-      const hz = parseInt(r3.stdout.trim()) || 100;
-      const r4 = await exec('cat /proc/uptime');
-      const uptime = parseFloat(r4.stdout.split(' ')[0]);
-      const elapsed = uptime - startTicks / hz;
+      const rHz = await exec('getconf CLK_TCK');
+      const hz = parseInt((rHz.stdout || '').trim()) || 100;
+      const rUp = await exec('cat /proc/uptime');
+      const uptime = parseFloat((rUp.stdout || '0').split(' ')[0]);
+      const elapsed = Math.max(0, uptime - startTicks / hz);
       const h = Math.floor(elapsed / 3600);
       const m = Math.floor((elapsed % 3600) / 60);
       const s = Math.floor(elapsed % 60);
       document.getElementById('kvUptime').textContent = `${h}h ${m}m ${s}s`;
+    } else {
+      document.getElementById('kvUptime').textContent = '-';
     }
   } else {
     document.getElementById('kvUptime').textContent = '-';
@@ -315,35 +683,43 @@ async function loadStatus() {
 
   // CPU 拓扑
   const rTopo = await exec(`for p in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
-    [ -d "$p" ] || continue
-    echo "$(cat $p/related_cpus 2>/dev/null)"
+    [ -d "\$p" ] || continue
+    cat "\$p/related_cpus" 2>/dev/null
   done`);
-  const policies = rTopo.stdout.trim().split('\n').filter(Boolean);
-  const topo = policies.map(p => {
-    const cnt = p.includes('-') ? (parseInt(p.split('-')[1]) - parseInt(p.split('-')[0]) + 1) : p.split(/[ ,]/).filter(Boolean).length;
-    return cnt;
-  }).join('+');
-  document.getElementById('kvTopo').textContent = topo || 'unknown';
+  const policies = (rTopo.stdout || '').trim().split('\n').filter(Boolean);
+  const counts = policies.map(line => {
+    const t = line.trim();
+    if (t.includes('-')) {
+      const [s, e] = t.split('-');
+      return (parseInt(e) - parseInt(s) + 1) || 1;
+    }
+    return t.split(/[ ,]/).filter(Boolean).length;
+  });
+  const topo = counts.join('+') || 'unknown';
+  document.getElementById('kvTopo').textContent = topo;
 
-  // 大核小核:从日志找
-  const rCpu = await exec(`grep -E '拓扑' ${LOG_FILE} | tail -1`);
-  const m = rCpu.stdout.match(/大核=(\S+)\s+小核=(\S+)/);
-  document.getElementById('kvCpu').textContent = m ? `大=${m[1]} 小=${m[2]}` : '-';
+  // 大核小核 + 规则数 + eBPF 从日志提取
+  const rLog = await exec(`tail -n 200 ${LOG_FILE}`);
+  const logText = rLog.stdout || '';
+  const mCpu = logText.match(/拓扑:.*大核=(\S+)\s+小核=(\S+)/);
+  document.getElementById('kvCpu').textContent = mCpu ? `大=${mCpu[1]} 小=${mCpu[2]}` : '-';
+  const mRules = logText.match(/共\s+(\d+)\s+条规则/);
+  document.getElementById('kvRules').textContent = mRules ? mRules[1] : '-';
+  document.getElementById('kvBpf').textContent = logText.includes('eBPF: 可用') ? '可用' : (logText.includes('eBPF') ? '未启用' : '-');
 
-  // 规则数
-  const rRules = await exec(`grep -E '共 .* 条规则' ${LOG_FILE} | tail -1`);
-  const rm = rRules.stdout.match(/共\s+(\d+)\s+条规则/);
-  document.getElementById('kvRules').textContent = rm ? rm[1] : '-';
-
-  // eBPF
-  const rBpf = await exec(`grep -E 'eBPF' ${LOG_FILE} | tail -1`);
-  document.getElementById('kvBpf').textContent = rBpf.stdout.includes('可用') ? '可用' : (rBpf.stdout ? '未启用' : '-');
+  // 版本
+  const rVer = await exec(`grep '^version=' ${MOD_DIR}/module.prop 2>/dev/null | cut -d= -f2`);
+  document.getElementById('versionPill').textContent = (rVer.stdout || '').trim() || 'v?';
 }
 
 async function loadConfigSummary() {
-  const r = await exec(`cat ${CONFIG_FILE} 2>/dev/null | head -c 4096`);
-  if (!r.stdout.trim()) {
-    document.getElementById('configSummary').innerHTML = '<div class="empty">配置文件不存在或为空</div>';
+  const r = await exec(`cat ${CONFIG_FILE} 2>/dev/null`);
+  const pill = document.getElementById('configStatusPill');
+  const el = document.getElementById('configSummary');
+  if (!r.stdout || !r.stdout.trim()) {
+    el.innerHTML = '<div class="empty">配置文件不存在或为空</div>';
+    pill.textContent = '未配置';
+    pill.className = 'pill err';
     return;
   }
   try {
@@ -352,109 +728,122 @@ async function loadConfigSummary() {
     const features = data.features || {};
     let html = '<div class="kv">';
     html += `<div class="k">规则条数</div><div class="v">${rules.length}</div>`;
-    html += `<div class="k">eBPF</div><div class="v">${features.ebpf === false ? '关闭' : '开启'}</div>`;
-    html += `<div class="k">auto-for-none</div><div class="v">${features['auto-for-none'] === false ? '关闭' : '开启'}</div>`;
+    html += `<div class="k">eBPF</div><div class="v"><span class="tag ${features.ebpf === false ? 'warn' : 'ok'}">${features.ebpf === false ? '关闭' : '开启'}</span></div>`;
+    html += `<div class="k">自动分配</div><div class="v"><span class="tag ${features['auto-for-none'] === false ? 'warn' : 'ok'}">${features['auto-for-none'] === false ? '关闭' : '开启'}</span></div>`;
     html += '</div>';
-    html += '<div class="muted" style="margin-top:10px;">应用列表:</div>';
-    html += '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:4px;max-height:140px;overflow-y:auto;">';
-    rules.slice(0, 30).forEach(r => {
-      const pkgs = (r.packages || []).join(', ');
-      html += `<div style="padding:2px 0;">${escapeHtml(r.friendly || pkgs || '?')} <span style="color:var(--accent-dim);">→</span> ${escapeHtml(r.cpuset?.other || '0')}</div>`;
-    });
-    if (rules.length > 30) html += `<div style="color:var(--text-dim);">… 还有 ${rules.length - 30} 条</div>`;
-    html += '</div>';
-    document.getElementById('configSummary').innerHTML = html;
+    if (rules.length > 0) {
+      html += '<div class="rule-list" style="margin-top:12px;">';
+      rules.slice(0, 50).forEach(r => {
+        const name = r.friendly || (r.packages && r.packages[0]) || '?';
+        const cpus = (r.cpuset && r.cpuset.other) || '0';
+        html += `<div class="row"><span class="name">${escapeHtml(name)}</span><span class="cpus">${escapeHtml(cpus)}</span></div>`;
+      });
+      if (rules.length > 50) html += `<div class="row" style="color:var(--text-dim);">… 还有 ${rules.length - 50} 条</div>`;
+      html += '</div>';
+    }
+    el.innerHTML = html;
+    pill.textContent = '已加载';
+    pill.className = 'pill ok';
   } catch (e) {
-    document.getElementById('configSummary').innerHTML = `<div class="empty">JSON 解析失败: ${escapeHtml(e.message)}</div>`;
+    el.innerHTML = `<div class="empty">JSON 解析失败: ${escapeHtml(e.message)}</div>`;
+    pill.textContent = 'JSON 错误';
+    pill.className = 'pill err';
   }
 }
 
-// ====== 配置编辑 ======
+// ====================================================================
+//  配置编辑
+// ====================================================================
 async function loadConfig() {
   const ta = document.getElementById('configText');
   ta.value = '加载中…';
   const r = await exec(`cat ${CONFIG_FILE}`);
   if (r.errno !== 0 && !r.stdout) {
     ta.value = '';
-    toast('配置文件读取失败: ' + r.stderr, 'error');
+    toast('配置文件读取失败: ' + r.stderr, 'err');
     return;
   }
   ta.value = r.stdout;
   const rMtime = await exec(`stat -c '%y' ${CONFIG_FILE} 2>/dev/null`);
-  document.getElementById('configMtime').textContent = rMtime.stdout ? `(修改于 ${rMtime.stdout.split('.')[0]})` : '';
-  toast('已加载配置', 'ok');
+  document.getElementById('configMtime').textContent = rMtime.stdout ? `修改于 ${rMtime.stdout.split('.')[0]}` : '';
+  toast('已加载配置');
 }
 
 async function saveConfig() {
   const text = document.getElementById('configText').value;
-  // 写到临时文件再覆盖,避免中途崩溃
+  // 用 base64 编码避开 heredoc 转义问题
+  const b64 = btoa(unescape(encodeURIComponent(text)));
   const tmp = CONFIG_FILE + '.tmp';
-  const r = await exec(`cat > ${tmp} <<'__AETHER_EOF__'
-${text}
-__AETHER_EOF__`);
+  const r = await exec(`echo '${b64}' | base64 -d > ${tmp}`);
   if (r.errno !== 0) {
-    toast('写入失败: ' + r.stderr, 'error');
+    toast('写入失败: ' + r.stderr, 'err');
     return;
   }
   const r2 = await exec(`mv ${tmp} ${CONFIG_FILE} && chmod 644 ${CONFIG_FILE}`);
   if (r2.errno !== 0) {
-    toast('应用失败: ' + r2.stderr, 'error');
+    toast('应用失败: ' + r2.stderr, 'err');
     return;
   }
-  toast('已保存,重启服务…', 'ok');
+  toast('已保存,重启中…');
   await restartService();
+  loadConfigSummary();
 }
 
 function validateConfig() {
   try {
     JSON.parse(document.getElementById('configText').value);
-    toast('JSON 语法正确', 'ok');
+    toast('JSON 语法正确');
   } catch (e) {
-    toast('JSON 错误: ' + e.message, 'error');
+    toast('JSON 错误: ' + e.message, 'err');
   }
 }
 
-// ====== 缓存 ======
+// ====================================================================
+//  缓存
+// ====================================================================
 async function loadCacheInfo() {
-  const r = await exec(`[ -f ${CACHE_FILE} ] && wc -l ${CACHE_FILE} | awk '{print $1}' || echo 0`);
-  const lines = parseInt(r.stdout.trim()) || 0;
+  const r = await exec(`[ -f ${CACHE_FILE} ] && grep -c '"packages"' ${CACHE_FILE} || echo 0`);
+  const n = parseInt((r.stdout || '0').trim()) || 0;
   const r2 = await exec(`[ -f ${CACHE_FILE} ] && stat -c '%s' ${CACHE_FILE} || echo 0`);
-  const size = parseInt(r2.stdout.trim()) || 0;
+  const size = parseInt((r2.stdout || '0').trim()) || 0;
+  document.getElementById('cachePill').textContent = `${n} 条`;
   document.getElementById('cacheInfo').innerHTML = `<div class="kv">
-    <div class="k">缓存条目</div><div class="v">${lines} 行</div>
+    <div class="k">缓存条目</div><div class="v">${n} 条</div>
     <div class="k">文件大小</div><div class="v">${size} 字节</div>
   </div>`;
 }
 
 async function viewCache() {
   const r = await exec(`cat ${CACHE_FILE} 2>/dev/null`);
-  if (!r.stdout.trim()) { toast('缓存为空', ''); return; }
-  document.getElementById('shellOutput').style.display = 'block';
-  document.getElementById('shellOutput').textContent = r.stdout;
+  if (!r.stdout || !r.stdout.trim()) { toast('缓存为空'); return; }
   document.querySelector('[data-tab="control"]').click();
+  const out = document.getElementById('shellOutput');
+  out.style.display = 'block';
+  out.textContent = r.stdout;
 }
 
 async function clearCache() {
   if (!confirm('确定要清除自动分配缓存吗?')) return;
   const r = await exec(`rm -f ${CACHE_FILE}`);
-  toast(r.errno === 0 ? '缓存已清除' : '清除失败: ' + r.stderr, r.errno === 0 ? 'ok' : 'error');
+  if (r.errno === 0) toast('缓存已清除');
+  else toast('清除失败: ' + r.stderr, 'err');
   loadCacheInfo();
 }
 
-// ====== 日志 ======
+// ====================================================================
+//  日志
+// ====================================================================
 let autoScroll = true;
 async function loadLog() {
-  const r = await exec(`tail -n 500 ${LOG_FILE}`);
+  const r = await exec(`tail -n 500 ${LOG_FILE} 2>/dev/null`);
   const viewer = document.getElementById('logViewer');
   if (!r.stdout) {
     viewer.innerHTML = '<div class="empty">日志文件为空或不存在</div>';
     return;
   }
   const html = r.stdout.split('\n').map(line => {
-    if (line.includes('[ERROR]') || line.includes('[PANIC]')) {
-      if (line.includes('[PANIC]')) return `<div class="line-panic">${escapeHtml(line)}</div>`;
-      return `<div class="line-err">${escapeHtml(line)}</div>`;
-    }
+    if (line.includes('[PANIC]')) return `<div class="line-panic">${escapeHtml(line)}</div>`;
+    if (line.includes('[ERROR]')) return `<div class="line-err">${escapeHtml(line)}</div>`;
     if (line.includes('[INFO]')) return `<div class="line-info">${escapeHtml(line)}</div>`;
     return `<div>${escapeHtml(line)}</div>`;
   }).join('');
@@ -465,31 +854,35 @@ async function loadLog() {
 async function clearLog() {
   if (!confirm('确定清空日志?')) return;
   await exec(`> ${LOG_FILE}`);
-  toast('已清空', 'ok');
+  toast('已清空');
   loadLog();
 }
 
-// ====== 服务控制 ======
+// ====================================================================
+//  服务控制
+// ====================================================================
 async function startService() {
   toast('启动中…');
-  const r = await exec(`sh ${MOD_DIR}/service.sh`);
-  setTimeout(() => { loadStatus(); toast('已发送启动命令', 'ok'); }, 800);
+  await exec(`sh ${MOD_DIR}/service.sh`);
+  setTimeout(() => { loadStatus(); toast('已发送启动命令'); }, 1000);
 }
 
 async function stopService() {
-  const r = await exec(`pkill -f aether-optext`);
-  setTimeout(() => { loadStatus(); toast('已停止', 'ok'); }, 500);
+  await exec(`pkill -f aether-optext`);
+  setTimeout(() => { loadStatus(); toast('已停止'); }, 600);
 }
 
 async function restartService() {
   await exec(`pkill -f aether-optext`);
-  await new Promise(r => setTimeout(r, 500));
+  await new Promise(r => setTimeout(r, 600));
   await exec(`sh ${MOD_DIR}/service.sh`);
-  setTimeout(() => { loadStatus(); }, 800);
+  setTimeout(() => { loadStatus(); }, 1000);
   return true;
 }
 
-// ====== Shell ======
+// ====================================================================
+//  Shell
+// ====================================================================
 async function runShell() {
   const cmd = document.getElementById('shellInput').value.trim();
   if (!cmd) return;
@@ -500,12 +893,9 @@ async function runShell() {
   out.textContent = '$ ' + cmd + '\n' + (r.stdout || '') + (r.stderr ? '\n[stderr]\n' + r.stderr : '') + `\n[exit: ${r.errno}]`;
 }
 
-// ====== 工具 ======
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-// ====== 绑定 ======
+// ====================================================================
+//  绑定
+// ====================================================================
 document.getElementById('refreshStatus').onclick = loadStatus;
 document.getElementById('loadConfig').onclick = loadConfig;
 document.getElementById('saveConfig').onclick = saveConfig;
@@ -525,15 +915,23 @@ document.getElementById('clearShell').onclick = () => {
   document.getElementById('shellOutput').textContent = '';
 };
 
+// 启用 edge-to-edge
+try {
+  if (typeof ksu !== 'undefined' && ksu.enableEdgeToEdge) ksu.enableEdgeToEdge(true);
+  else if (typeof enableEdgeToEdge !== 'function') {} // ignore
+  else enableEdgeToEdge(true);
+} catch (e) {}
+
 // 初始加载
 loadStatus();
 loadConfig();
 loadCacheInfo();
 loadLog();
 
-// 10s 自动刷新状态
+// 状态页 10s 自动刷新
 setInterval(() => {
-  if (document.querySelector('.tabs button.active').dataset.tab === 'status') loadStatus();
+  const active = document.querySelector('.tabs button.active');
+  if (active && active.dataset.tab === 'status') loadStatus();
 }, 10000);
 </script>
 </body>
