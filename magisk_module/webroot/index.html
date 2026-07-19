@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Aether OptExt</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+:root {
+  --bg: #0f1419;
+  --surface: #1a1f26;
+  --surface-2: #232932;
+  --border: #2d3540;
+  --text: #e6e6e6;
+  --text-dim: #8a93a0;
+  --accent: #4cc4ff;
+  --accent-dim: #2a7ab0;
+  --green: #4caf50;
+  --red: #f44336;
+  --yellow: #ff9800;
+  --mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+}
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, 'Segoe UI', Roboto, 'Noto Sans CJK SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.app { max-width: 720px; margin: 0 auto; padding: 16px 16px 80px; }
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0 16px; border-bottom: 1px solid var(--border); margin-bottom: 16px;
+}
+header h1 { font-size: 18px; font-weight: 600; letter-spacing: 0.3px; }
+header h1 span { color: var(--accent); }
+.status-pill {
+  font-size: 11px; padding: 4px 10px; border-radius: 12px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.status-pill.running { background: rgba(76, 200, 76, 0.15); color: var(--green); border: 1px solid rgba(76, 200, 76, 0.4); }
+.status-pill.stopped { background: rgba(244, 67, 54, 0.15); color: var(--red); border: 1px solid rgba(244, 67, 54, 0.4); }
+.status-pill.unknown { background: rgba(255, 152, 0, 0.15); color: var(--yellow); border: 1px solid rgba(255, 152, 0, 0.4); }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 14px; margin-bottom: 12px;
+}
+.card h2 {
+  font-size: 12px; font-weight: 600; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
+.kv .k { color: var(--text-dim); }
+.kv .v { color: var(--text); font-family: var(--mono); word-break: break-all; }
+
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+button {
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 14px; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s; flex: 1; min-width: 80px;
+}
+button:hover { background: var(--border); border-color: var(--accent-dim); }
+button:active { transform: scale(0.97); }
+button.primary { background: var(--accent-dim); border-color: var(--accent); color: white; }
+button.primary:hover { background: var(--accent); }
+button.danger { background: rgba(244, 67, 54, 0.15); border-color: rgba(244, 67, 54, 0.5); color: #ff6b5d; }
+button.danger:hover { background: rgba(244, 67, 54, 0.3); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+textarea {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px; font-family: var(--mono); font-size: 12px;
+  resize: vertical; min-height: 280px; line-height: 1.45;
+  tab-size: 2;
+}
+textarea:focus { outline: none; border-color: var(--accent); }
+
+.log-viewer {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px; font-family: var(--mono);
+  font-size: 11px; line-height: 1.4; max-height: 360px;
+  overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+  color: var(--text-dim);
+}
+.log-viewer .line-info { color: var(--accent); }
+.log-viewer .line-err { color: #ff6b5d; }
+.log-viewer .line-panic { color: #ff9800; font-weight: 600; }
+
+.tabs {
+  display: flex; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 3px; margin-bottom: 12px;
+}
+.tabs button {
+  flex: 1; background: transparent; border: none; padding: 8px 12px;
+  font-size: 13px; font-weight: 500; color: var(--text-dim);
+  border-radius: 7px; min-width: 0;
+}
+.tabs button.active { background: var(--surface-2); color: var(--accent); }
+
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--surface-2); color: var(--text); padding: 10px 20px;
+  border-radius: 24px; border: 1px solid var(--border);
+  font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  z-index: 1000; opacity: 0; transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+.toast.error { border-color: var(--red); color: #ff6b5d; }
+.toast.ok { border-color: var(--green); color: #6bd976; }
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.loading { text-align: center; padding: 20px; color: var(--text-dim); font-size: 12px; }
+.muted { color: var(--text-dim); font-size: 11px; margin-top: 6px; }
+.empty { text-align: center; color: var(--text-dim); font-size: 12px; padding: 24px 8px; }
+.row-actions { display: flex; gap: 6px; margin-top: 10px; }
+.row-actions button { flex: 0 0 auto; min-width: 0; padding: 7px 10px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Aether <span>OptExt</span></h1>
+    <div id="statusPill" class="status-pill unknown">检测中</div>
+  </header>
+
+  <div class="tabs">
+    <button data-tab="status" class="active">状态</button>
+    <button data-tab="config">配置</button>
+    <button data-tab="log">日志</button>
+    <button data-tab="control">控制</button>
+  </div>
+
+  <!-- 状态 -->
+  <div id="tab-status" class="tab-panel active">
+    <div class="card">
+      <h2>运行状态 <button id="refreshStatus" style="flex:0 0 auto;min-width:0;padding:5px 10px;font-size:11px;">刷新</button></h2>
+      <div class="kv" id="statusKv">
+        <div class="k">进程</div><div class="v" id="kvProc">-</div>
+        <div class="k">PID</div><div class="v" id="kvPid">-</div>
+        <div class="k">运行时长</div><div class="v" id="kvUptime">-</div>
+        <div class="k">CPU 拓扑</div><div class="v" id="kvTopo">-</div>
+        <div class="k">大核/小核</div><div class="v" id="kvCpu">-</div>
+        <div class="k">规则数</div><div class="v" id="kvRules">-</div>
+        <div class="k">eBPF</div><div class="v" id="kvBpf">-</div>
+        <div class="k">数据目录</div><div class="v">/data/adb/aether</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>配置摘要</h2>
+      <div id="configSummary"><div class="loading">加载中…</div></div>
+    </div>
+  </div>
+
+  <!-- 配置 -->
+  <div id="tab-config" class="tab-panel">
+    <div class="card">
+      <h2>threads.json <span class="muted" id="configMtime"></span></h2>
+      <textarea id="configText" spellcheck="false" placeholder="加载中…"></textarea>
+      <div class="row-actions">
+        <button id="loadConfig">重新加载</button>
+        <button id="validateConfig">校验 JSON</button>
+        <button id="saveConfig" class="primary">保存</button>
+      </div>
+      <div class="muted">保存后会自动重启 aether-optext 服务以应用新配置。</div>
+    </div>
+    <div class="card">
+      <h2>自动分配缓存 <span class="muted">(threads_cache)</span></h2>
+      <div id="cacheInfo"><div class="loading">加载中…</div></div>
+      <div class="row-actions">
+        <button id="loadCache">查看内容</button>
+        <button id="clearCache" class="danger">清除缓存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div id="tab-log" class="tab-panel">
+    <div class="card">
+      <h2>threads_log.txt
+        <span style="display:flex;gap:6px;align-items:center;">
+          <label class="muted" style="margin:0;"><input type="checkbox" id="autoScroll" checked> 自动滚动</label>
+          <button id="refreshLog" style="flex:0 0 auto;min-width:0;padding:5px 10px;font-size:11px;">刷新</button>
+        </span>
+      </h2>
+      <div id="logViewer" class="log-viewer"><div class="loading">加载中…</div></div>
+      <div class="row-actions">
+        <button id="clearLog" class="danger">清空日志</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 控制 -->
+  <div id="tab-control" class="tab-panel">
+    <div class="card">
+      <h2>服务控制</h2>
+      <div class="btn-row">
+        <button id="startSvc" class="primary">启动</button>
+        <button id="stopSvc" class="danger">停止</button>
+        <button id="restartSvc">重启</button>
+      </div>
+      <div class="muted">启动命令: <code>sh /data/adb/modules/aether-optext/service.sh</code></div>
+    </div>
+    <div class="card">
+      <h2>Shell 命令 <span class="muted">(以 root 执行)</span></h2>
+      <textarea id="shellInput" spellcheck="false" rows="3" placeholder="例如:cat /data/adb/aether/threads.json | head" style="min-height:64px;"></textarea>
+      <div class="row-actions">
+        <button id="runShell">执行</button>
+        <button id="clearShell">清空</button>
+      </div>
+      <pre id="shellOutput" class="log-viewer" style="margin-top:10px;display:none;"></pre>
+    </div>
+    <div class="card">
+      <h2>关于</h2>
+      <div class="kv">
+        <div class="k">模块</div><div class="v">Aether OptExt</div>
+        <div class="k">作者</div><div class="v">NetizenNemo</div>
+        <div class="k">数据目录</div><div class="v">/data/adb/aether</div>
+        <div class="k">模块目录</div><div class="v">/data/adb/modules/aether-optext</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+// ====== KernelSU / APatch / Magisk Delta WebUI API 封装 ======
+const DATA_DIR = '/data/adb/aether';
+const MOD_DIR = '/data/adb/modules/aether-optext';
+const LOG_FILE = DATA_DIR + '/threads_log.txt';
+const CONFIG_FILE = DATA_DIR + '/threads.json';
+const CACHE_FILE = DATA_DIR + '/threads_cache';
+
+// exec: 兼容 Promise + callback 两种调用风格
+function exec(cmd, opts = {}) {
+  return new Promise((resolve) => {
+    if (typeof ksu === 'undefined' || !ksu.exec) {
+      resolve({ errno: -1, stdout: '', stderr: 'ksu API 不可用 (需在 KernelSU/APatch/Magisk Delta 中打开)' });
+      return;
+    }
+    let resolved = false;
+    try {
+      ksu.exec(cmd, JSON.stringify(opts), (stdout, stderr, exitCode) => {
+        if (resolved) return;
+        resolved = true;
+        resolve({ errno: exitCode, stdout: stdout || '', stderr: stderr || '' });
+      });
+    } catch (e) {
+      resolve({ errno: -1, stdout: '', stderr: String(e) });
+    }
+    // 5s 兜底
+    setTimeout(() => {
+      if (!resolved) { resolved = true; resolve({ errno: -1, stdout: '', stderr: '超时' }); }
+    }, 5000);
+  });
+}
+
+function toast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show ' + type;
+  setTimeout(() => { el.className = 'toast ' + type; }, 2200);
+}
+
+// ====== Tab 切换 ======
+document.querySelectorAll('.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'log') loadLog();
+    if (btn.dataset.tab === 'status') loadStatus();
+    if (btn.dataset.tab === 'config') loadConfigSummary();
+  });
+});
+
+// ====== 状态 ======
+async function loadStatus() {
+  const r = await exec('pidof aether-optext');
+  const pid = r.stdout.trim();
+  const running = !!pid;
+  const pill = document.getElementById('statusPill');
+  pill.className = 'status-pill ' + (running ? 'running' : 'stopped');
+  pill.textContent = running ? '运行中' : '已停止';
+  document.getElementById('kvProc').textContent = running ? 'aether-optext' : '-';
+  document.getElementById('kvPid').textContent = pid || '-';
+
+  if (running) {
+    const r2 = await exec(`cat /proc/${pid}/stat | awk '{print $22}'`);
+    const startTicks = parseInt(r2.stdout.trim());
+    if (!isNaN(startTicks)) {
+      const r3 = await exec('getconf CLK_TCK');
+      const hz = parseInt(r3.stdout.trim()) || 100;
+      const r4 = await exec('cat /proc/uptime');
+      const uptime = parseFloat(r4.stdout.split(' ')[0]);
+      const elapsed = uptime - startTicks / hz;
+      const h = Math.floor(elapsed / 3600);
+      const m = Math.floor((elapsed % 3600) / 60);
+      const s = Math.floor(elapsed % 60);
+      document.getElementById('kvUptime').textContent = `${h}h ${m}m ${s}s`;
+    }
+  } else {
+    document.getElementById('kvUptime').textContent = '-';
+  }
+
+  // CPU 拓扑
+  const rTopo = await exec(`for p in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
+    [ -d "$p" ] || continue
+    echo "$(cat $p/related_cpus 2>/dev/null)"
+  done`);
+  const policies = rTopo.stdout.trim().split('\n').filter(Boolean);
+  const topo = policies.map(p => {
+    const cnt = p.includes('-') ? (parseInt(p.split('-')[1]) - parseInt(p.split('-')[0]) + 1) : p.split(/[ ,]/).filter(Boolean).length;
+    return cnt;
+  }).join('+');
+  document.getElementById('kvTopo').textContent = topo || 'unknown';
+
+  // 大核小核:从日志找
+  const rCpu = await exec(`grep -E '拓扑' ${LOG_FILE} | tail -1`);
+  const m = rCpu.stdout.match(/大核=(\S+)\s+小核=(\S+)/);
+  document.getElementById('kvCpu').textContent = m ? `大=${m[1]} 小=${m[2]}` : '-';
+
+  // 规则数
+  const rRules = await exec(`grep -E '共 .* 条规则' ${LOG_FILE} | tail -1`);
+  const rm = rRules.stdout.match(/共\s+(\d+)\s+条规则/);
+  document.getElementById('kvRules').textContent = rm ? rm[1] : '-';
+
+  // eBPF
+  const rBpf = await exec(`grep -E 'eBPF' ${LOG_FILE} | tail -1`);
+  document.getElementById('kvBpf').textContent = rBpf.stdout.includes('可用') ? '可用' : (rBpf.stdout ? '未启用' : '-');
+}
+
+async function loadConfigSummary() {
+  const r = await exec(`cat ${CONFIG_FILE} 2>/dev/null | head -c 4096`);
+  if (!r.stdout.trim()) {
+    document.getElementById('configSummary').innerHTML = '<div class="empty">配置文件不存在或为空</div>';
+    return;
+  }
+  try {
+    const data = JSON.parse(r.stdout);
+    const rules = data.rules || (Array.isArray(data) ? data : []);
+    const features = data.features || {};
+    let html = '<div class="kv">';
+    html += `<div class="k">规则条数</div><div class="v">${rules.length}</div>`;
+    html += `<div class="k">eBPF</div><div class="v">${features.ebpf === false ? '关闭' : '开启'}</div>`;
+    html += `<div class="k">auto-for-none</div><div class="v">${features['auto-for-none'] === false ? '关闭' : '开启'}</div>`;
+    html += '</div>';
+    html += '<div class="muted" style="margin-top:10px;">应用列表:</div>';
+    html += '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:4px;max-height:140px;overflow-y:auto;">';
+    rules.slice(0, 30).forEach(r => {
+      const pkgs = (r.packages || []).join(', ');
+      html += `<div style="padding:2px 0;">${escapeHtml(r.friendly || pkgs || '?')} <span style="color:var(--accent-dim);">→</span> ${escapeHtml(r.cpuset?.other || '0')}</div>`;
+    });
+    if (rules.length > 30) html += `<div style="color:var(--text-dim);">… 还有 ${rules.length - 30} 条</div>`;
+    html += '</div>';
+    document.getElementById('configSummary').innerHTML = html;
+  } catch (e) {
+    document.getElementById('configSummary').innerHTML = `<div class="empty">JSON 解析失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ====== 配置编辑 ======
+async function loadConfig() {
+  const ta = document.getElementById('configText');
+  ta.value = '加载中…';
+  const r = await exec(`cat ${CONFIG_FILE}`);
+  if (r.errno !== 0 && !r.stdout) {
+    ta.value = '';
+    toast('配置文件读取失败: ' + r.stderr, 'error');
+    return;
+  }
+  ta.value = r.stdout;
+  const rMtime = await exec(`stat -c '%y' ${CONFIG_FILE} 2>/dev/null`);
+  document.getElementById('configMtime').textContent = rMtime.stdout ? `(修改于 ${rMtime.stdout.split('.')[0]})` : '';
+  toast('已加载配置', 'ok');
+}
+
+async function saveConfig() {
+  const text = document.getElementById('configText').value;
+  // 写到临时文件再覆盖,避免中途崩溃
+  const tmp = CONFIG_FILE + '.tmp';
+  const r = await exec(`cat > ${tmp} <<'__AETHER_EOF__'
+${text}
+__AETHER_EOF__`);
+  if (r.errno !== 0) {
+    toast('写入失败: ' + r.stderr, 'error');
+    return;
+  }
+  const r2 = await exec(`mv ${tmp} ${CONFIG_FILE} && chmod 644 ${CONFIG_FILE}`);
+  if (r2.errno !== 0) {
+    toast('应用失败: ' + r2.stderr, 'error');
+    return;
+  }
+  toast('已保存,重启服务…', 'ok');
+  await restartService();
+}
+
+function validateConfig() {
+  try {
+    JSON.parse(document.getElementById('configText').value);
+    toast('JSON 语法正确', 'ok');
+  } catch (e) {
+    toast('JSON 错误: ' + e.message, 'error');
+  }
+}
+
+// ====== 缓存 ======
+async function loadCacheInfo() {
+  const r = await exec(`[ -f ${CACHE_FILE} ] && wc -l ${CACHE_FILE} | awk '{print $1}' || echo 0`);
+  const lines = parseInt(r.stdout.trim()) || 0;
+  const r2 = await exec(`[ -f ${CACHE_FILE} ] && stat -c '%s' ${CACHE_FILE} || echo 0`);
+  const size = parseInt(r2.stdout.trim()) || 0;
+  document.getElementById('cacheInfo').innerHTML = `<div class="kv">
+    <div class="k">缓存条目</div><div class="v">${lines} 行</div>
+    <div class="k">文件大小</div><div class="v">${size} 字节</div>
+  </div>`;
+}
+
+async function viewCache() {
+  const r = await exec(`cat ${CACHE_FILE} 2>/dev/null`);
+  if (!r.stdout.trim()) { toast('缓存为空', ''); return; }
+  document.getElementById('shellOutput').style.display = 'block';
+  document.getElementById('shellOutput').textContent = r.stdout;
+  document.querySelector('[data-tab="control"]').click();
+}
+
+async function clearCache() {
+  if (!confirm('确定要清除自动分配缓存吗?')) return;
+  const r = await exec(`rm -f ${CACHE_FILE}`);
+  toast(r.errno === 0 ? '缓存已清除' : '清除失败: ' + r.stderr, r.errno === 0 ? 'ok' : 'error');
+  loadCacheInfo();
+}
+
+// ====== 日志 ======
+let autoScroll = true;
+async function loadLog() {
+  const r = await exec(`tail -n 500 ${LOG_FILE}`);
+  const viewer = document.getElementById('logViewer');
+  if (!r.stdout) {
+    viewer.innerHTML = '<div class="empty">日志文件为空或不存在</div>';
+    return;
+  }
+  const html = r.stdout.split('\n').map(line => {
+    if (line.includes('[ERROR]') || line.includes('[PANIC]')) {
+      if (line.includes('[PANIC]')) return `<div class="line-panic">${escapeHtml(line)}</div>`;
+      return `<div class="line-err">${escapeHtml(line)}</div>`;
+    }
+    if (line.includes('[INFO]')) return `<div class="line-info">${escapeHtml(line)}</div>`;
+    return `<div>${escapeHtml(line)}</div>`;
+  }).join('');
+  viewer.innerHTML = html;
+  if (autoScroll) viewer.scrollTop = viewer.scrollHeight;
+}
+
+async function clearLog() {
+  if (!confirm('确定清空日志?')) return;
+  await exec(`> ${LOG_FILE}`);
+  toast('已清空', 'ok');
+  loadLog();
+}
+
+// ====== 服务控制 ======
+async function startService() {
+  toast('启动中…');
+  const r = await exec(`sh ${MOD_DIR}/service.sh`);
+  setTimeout(() => { loadStatus(); toast('已发送启动命令', 'ok'); }, 800);
+}
+
+async function stopService() {
+  const r = await exec(`pkill -f aether-optext`);
+  setTimeout(() => { loadStatus(); toast('已停止', 'ok'); }, 500);
+}
+
+async function restartService() {
+  await exec(`pkill -f aether-optext`);
+  await new Promise(r => setTimeout(r, 500));
+  await exec(`sh ${MOD_DIR}/service.sh`);
+  setTimeout(() => { loadStatus(); }, 800);
+  return true;
+}
+
+// ====== Shell ======
+async function runShell() {
+  const cmd = document.getElementById('shellInput').value.trim();
+  if (!cmd) return;
+  const out = document.getElementById('shellOutput');
+  out.style.display = 'block';
+  out.textContent = '$ ' + cmd + '\n--- 执行中 ---';
+  const r = await exec(cmd);
+  out.textContent = '$ ' + cmd + '\n' + (r.stdout || '') + (r.stderr ? '\n[stderr]\n' + r.stderr : '') + `\n[exit: ${r.errno}]`;
+}
+
+// ====== 工具 ======
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ====== 绑定 ======
+document.getElementById('refreshStatus').onclick = loadStatus;
+document.getElementById('loadConfig').onclick = loadConfig;
+document.getElementById('saveConfig').onclick = saveConfig;
+document.getElementById('validateConfig').onclick = validateConfig;
+document.getElementById('loadCache').onclick = viewCache;
+document.getElementById('clearCache').onclick = clearCache;
+document.getElementById('refreshLog').onclick = loadLog;
+document.getElementById('clearLog').onclick = clearLog;
+document.getElementById('autoScroll').onchange = e => { autoScroll = e.target.checked; };
+document.getElementById('startSvc').onclick = startService;
+document.getElementById('stopSvc').onclick = stopService;
+document.getElementById('restartSvc').onclick = restartService;
+document.getElementById('runShell').onclick = runShell;
+document.getElementById('clearShell').onclick = () => {
+  document.getElementById('shellInput').value = '';
+  document.getElementById('shellOutput').style.display = 'none';
+  document.getElementById('shellOutput').textContent = '';
+};
+
+// 初始加载
+loadStatus();
+loadConfig();
+loadCacheInfo();
+loadLog();
+
+// 10s 自动刷新状态
+setInterval(() => {
+  if (document.querySelector('.tabs button.active').dataset.tab === 'status') loadStatus();
+}, 10000);
+</script>
+</body>
+</html>

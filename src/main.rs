@@ -29,11 +29,11 @@ fn main() {
             .map(|mut f| write!(f, "[PANIC] {} at {}\n", msg, loc));
     }));
 
-    let _ = fs::create_dir_all("/sdcard/Android/Aether");
+    let _ = fs::create_dir_all("/data/adb/aether");
     fs::write(log::PATH, "").ok();
 
     let args: Vec<String> = env::args().collect();
-    let mut config_path = "/sdcard/Android/Aether/threads.json".to_string();
+    let mut config_path = "/data/adb/aether/threads.json".to_string();
     let mut interval = 2u64;
     let mut i = 1;
     while i < args.len() {
@@ -89,7 +89,7 @@ fn main() {
     let bpf = bpf::probe(cfg.ebpf);
     if bpf.ok { info!("eBPF: 可用"); }
 
-    let _ = fs::create_dir_all("/sdcard/Android/Aether");
+    let _ = fs::create_dir_all("/data/adb/aether");
 
     // 启动时自动分配
     let unknown = process::scan_unknown(&cfg.pkg_set, &all_w);

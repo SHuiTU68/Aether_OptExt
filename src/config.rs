@@ -84,7 +84,7 @@ pub mod cache {
     use std::{collections::HashSet, fs};
     use super::{Rule, fnmatch};
 
-    const FILE: &str = "/sdcard/Android/Aether/threads_cache";
+    const FILE: &str = "/data/adb/aether/threads_cache";
 
     pub fn merge(set: &mut HashSet<String>, rules: &mut Vec<Rule>) {
         let data = match fs::read_to_string(FILE) { Ok(x) => x, Err(_) => return };
@@ -150,7 +150,7 @@ pub mod cache {
             pkg, pkg, little, comm_json
         );
 
-        let _ = fs::create_dir_all("/sdcard/Android/Aether");
+        let _ = fs::create_dir_all("/data/adb/aether");
         let old = fs::read_to_string(FILE).unwrap_or_default();
         let new = if old.trim().is_empty() || !old.trim_start().starts_with('[') {
             format!("[\n{}\n]\n", entry)

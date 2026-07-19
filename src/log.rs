@@ -1,6 +1,6 @@
 use std::{fs, io::Write};
 
-pub const PATH: &str = "/sdcard/Android/Aether/threads_log.txt";
+pub const PATH: &str = "/data/adb/aether/threads_log.txt";
 
 pub fn write(level: &str, msg: &str) {
     let mut now: libc::time_t = 0;

@@ -1,21 +1,19 @@
 #!/system/bin/sh
 MODDIR=${0%/*}
-CONFIG="/sdcard/Android/Aether/threads.json"
+DATA_DIR=/data/adb/aether
+CONFIG="$DATA_DIR/threads.json"
 
-wait_until_login() {
+wait_until_boot() {
     local i=0
     while [ "$(getprop sys.boot_completed)" != "1" ] && [ $i -lt 60 ]; do
         sleep 1; i=$((i+1))
     done
-    i=0
-    while [ $i -lt 30 ]; do
-        mkdir -p "/sdcard/Android/Aether" 2>/dev/null && break
-        sleep 1; i=$((i+1))
-    done
+    # /data/adb 在 boot 后立即可用,无需等待 sdcard 挂载
+    mkdir -p "$DATA_DIR" 2>/dev/null
 }
 
-wait_until_login
-rm -f /sdcard/Android/Aether/threads_log.txt 2>/dev/null
+wait_until_boot
+rm -f "$DATA_DIR/threads_log.txt" 2>/dev/null
 pkill "aether-optext" 2>/dev/null
 sleep 1
 
