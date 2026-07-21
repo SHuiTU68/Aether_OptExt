@@ -76,7 +76,8 @@ rm -f "$DATA_DIR/threads_log.txt" 2>/dev/null
 rm -f "$DATA_DIR/status.json" 2>/dev/null
 rm -f "$PID_FILE" 2>/dev/null
 pkill "aether-optext" 2>/dev/null
-sleep 1
+# 减少等待时间: 1s → 0.3s (pkill 信号几乎即时)
+sleep 0.3 2>/dev/null || sleep 1
 
 if [ ! -f "$MODDIR/aether-optext" ]; then
     echo "[Aether] 错误: 二进制不存在: $MODDIR/aether-optext"
@@ -96,8 +97,8 @@ setsid "$MODDIR/aether-optext" -c "$CONFIG" -s 2 >/dev/null 2>&1 &
 APID=$!
 echo "[Aether] PID $APID"
 
-# 等待 2 秒,检查进程是否存活 (捕获立即退出的情况)
-sleep 2
+# 等待 1 秒检查进程是否存活 (原 2s,减少启动检测延迟)
+sleep 1
 if kill -0 $APID 2>/dev/null; then
     echo "[Aether] 启动成功,进程存活"
 else

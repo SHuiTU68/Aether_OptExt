@@ -783,30 +783,94 @@ function escapeHtml(s) {
 }
 
 // 多方法检测 aether-optext 进程 PID,返回 {pid, src} 或 {pid:'', src:''}
+// 单次 exec 完成所有 PID 检测 (4 种方法合并为一个 shell 命令,避免串行 4 次 IPC)
+// 返回格式: 第一行 PID,第二行 SRC
 async function detectPid() {
-  // 1. 读 pid 文件 + kill -0 校验
-  const rPid = await exec(`cat ${PID_FILE} 2>/dev/null`);
-  const filePid = (rPid.stdout || '').trim();
-  if (/^\d+$/.test(filePid)) {
-    const rAlive = await exec(`kill -0 ${filePid} 2>/dev/null && echo ok || echo no`);
-    if ((rAlive.stdout || '').trim() === 'ok') return { pid: filePid, src: 'pidfile' };
+  const script = `PID=""
+SRC=""
+if [ -f "${PID_FILE}" ]; then
+  P=$(cat "${PID_FILE}" 2>/dev/null)
+  if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then PID="$P"; SRC="pidfile"; fi
+fi
+if [ -z "$PID" ]; then
+  P=$(pidof aether-optext 2>/dev/null | tr ' ' '\\n' | head -1)
+  if [ -n "$P" ]; then PID="$P"; SRC="pidof"; fi
+fi
+if [ -z "$PID" ]; then
+  P=$(pgrep -f aether-optext 2>/dev/null | head -1)
+  if [ -n "$P" ]; then PID="$P"; SRC="pgrep"; fi
+fi
+if [ -z "$PID" ]; then
+  for p in /proc/[0-9]*; do
+    [ -r "$p/cmdline" ] || continue
+    if tr '\\0' ' ' < "$p/cmdline" 2>/dev/null | grep -q aether-optext; then
+      PID=$(basename "$p"); SRC="proc"; break
+    fi
+  done
+fi
+echo "$PID"
+echo "$SRC"`;
+  const r = await exec(script);
+  const lines = (r.stdout || '').split('\n');
+  const pid = (lines[0] || '').trim();
+  const src = (lines[1] || '').trim();
+  return { pid: /^\d+$/.test(pid) ? pid : '', src };
+}
+
+// 单次 exec 获取状态页所有需要的信息 (PID + status.json + version + 二进制存在性 + service.log)
+// 避免多次串行 exec,大幅减少 IPC 往返
+async function fetchStatusBundle() {
+  const script = `# 1. PID 检测 (4 方法合并)
+PID=""
+SRC=""
+if [ -f "${PID_FILE}" ]; then
+  P=$(cat "${PID_FILE}" 2>/dev/null)
+  if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then PID="$P"; SRC="pidfile"; fi
+fi
+if [ -z "$PID" ]; then P=$(pidof aether-optext 2>/dev/null | tr ' ' '\\n' | head -1); [ -n "$P" ] && PID="$P" && SRC="pidof"; fi
+if [ -z "$PID" ]; then P=$(pgrep -f aether-optext 2>/dev/null | head -1); [ -n "$P" ] && PID="$P" && SRC="pgrep"; fi
+if [ -z "$PID" ]; then
+  for p in /proc/[0-9]*; do
+    [ -r "$p/cmdline" ] || continue
+    tr '\\0' ' ' < "$p/cmdline" 2>/dev/null | grep -q aether-optext && { PID=$(basename "$p"); SRC="proc"; break; }
+  done
+fi
+echo "PID=$PID"
+echo "SRC=$SRC"
+# 2. status.json
+echo "STATUS_JSON=$(cat ${STATUS_FILE} 2>/dev/null)"
+# 3. 版本
+echo "VERSION=$(grep '^version=' ${MOD_DIR}/module.prop 2>/dev/null | cut -d= -f2-)"
+# 4. 二进制存在
+[ -f ${MOD_DIR}/aether-optext ] && echo "BIN=yes" || echo "BIN=no"
+# 5. service.log 末尾 30 行 (仅在未运行时需要,但顺手取)
+echo "SERVICE_LOG_EOF"
+tail -n 30 ${DATA_DIR}/service.log 2>/dev/null
+echo "SERVICE_LOG_END"`;
+  const r = await exec(script);
+  return parseStatusBundle(r.stdout || '');
+}
+
+function parseStatusBundle(out) {
+  const result = { pid: '', src: '', statusJson: '', version: '', binExists: false, serviceLog: '' };
+  const lines = out.split('\n');
+  let inServiceLog = false;
+  const logLines = [];
+  for (const line of lines) {
+    if (inServiceLog) {
+      if (line === 'SERVICE_LOG_END') { result.serviceLog = logLines.join('\n'); inServiceLog = false; }
+      else logLines.push(line);
+      continue;
+    }
+    if (line === 'SERVICE_LOG_EOF') { inServiceLog = true; continue; }
+    if (line.startsWith('PID=')) result.pid = line.slice(4).trim();
+    else if (line.startsWith('SRC=')) result.src = line.slice(4).trim();
+    else if (line.startsWith('STATUS_JSON=')) result.statusJson = line.slice(12);
+    else if (line.startsWith('VERSION=')) result.version = line.slice(8).trim();
+    else if (line.startsWith('BIN=')) result.binExists = line.slice(4).trim() === 'yes';
   }
-  // 2. pidof
-  const rPo = await exec('pidof aether-optext 2>/dev/null');
-  const po = (rPo.stdout || '').trim().split(/\s+/)[0];
-  if (/^\d+$/.test(po)) return { pid: po, src: 'pidof' };
-  // 3. pgrep -f
-  const rPg = await exec('pgrep -f aether-optext 2>/dev/null');
-  const pg = (rPg.stdout || '').trim().split(/\s+/)[0];
-  if (/^\d+$/.test(pg)) return { pid: pg, src: 'pgrep' };
-  // 4. /proc 扫描 (最可靠兜底)
-  const rScan = await exec(`for p in /proc/[0-9]*; do
-    [ -r "\$p/cmdline" ] || continue
-    tr '\\0' ' ' < "\$p/cmdline" 2>/dev/null | grep -q aether-optext && { basename "\$p"; break; }
-  done`);
-  const sc = (rScan.stdout || '').trim().split(/\s+/)[0];
-  if (/^\d+$/.test(sc)) return { pid: sc, src: 'proc' };
-  return { pid: '', src: '' };
+  if (!/^\d+$/.test(result.pid)) result.pid = '';
+  return result;
 }
 
 function fmtUptime(sec) {
@@ -830,17 +894,23 @@ function fmtTime(ts) {
 }
 
 // ====================================================================
-//  Tab 切换
+//  Tab 切换 (懒加载: 只在切换到 tab 时加载,减少初始开销)
 // ====================================================================
+let _loadedTabs = {}; // 记录哪些 tab 已加载过
 document.querySelectorAll('.tabs button').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    if (btn.dataset.tab === 'log') loadLog();
-    if (btn.dataset.tab === 'status') loadStatus();
-    if (btn.dataset.tab === 'config') loadConfigSummary();
+    const tab = btn.dataset.tab;
+    document.getElementById('tab-' + tab).classList.add('active');
+    // 状态页每次切换都刷新 (轻量,单次 exec)
+    if (tab === 'status') loadStatus();
+    // 配置摘要只在首次进入或已变更时加载
+    if (tab === 'config' && !_loadedTabs.config) { loadConfigSummary(); _loadedTabs.config = true; }
+    // 日志只在日志 tab 加载,且启动定时器
+    if (tab === 'log') { loadLog(); startLogTimer(); }
+    else stopLogTimer();
   });
 });
 
@@ -848,6 +918,8 @@ document.querySelectorAll('.tabs button').forEach(btn => {
 //  状态页 — 优先读 status.json,失败则回退到旧方法
 // ====================================================================
 let statusBusy = false;
+let autoStartAttempted = false;  // 自动启动只尝试一次 (避免循环)
+let serviceStarting = false;     // 防止重复点击启动
 
 // 链接诊断:逐项检查模块↔WebUI 链接所需的条件
 async function runDiagnostic() {
@@ -925,25 +997,25 @@ async function loadStatus() {
   const dot = document.getElementById('statusDot');
   const txt = document.getElementById('statusText');
 
-  // 多方法检测 PID (pidfile/pidof/pgrep/proc scan)
-  const { pid, src } = await detectPid();
+  // 单次 exec 获取所有状态信息 (大幅减少 IPC 往返,提升响应速度)
+  const bundle = await fetchStatusBundle();
+  const pid = bundle.pid;
+  const src = bundle.src;
   const running = !!pid;
 
-  // 读 status.json (模块每轮循环写入)
-  const rSt = await exec(`cat ${STATUS_FILE} 2>/dev/null`);
+  // 解析 status.json
   let st = null;
-  if (rSt.stdout && rSt.stdout.trim()) {
-    try { st = JSON.parse(rSt.stdout); } catch (e) { st = null; }
+  if (bundle.statusJson) {
+    try { st = JSON.parse(bundle.statusJson); } catch (e) { st = null; }
   }
 
-  // 若 status.json 中的 PID 与检测到的不一致,以检测到为准 (旧 status 可能是上次运行的)
+  // 若 status.json 中的 PID 与检测到的不一致,以检测到为准
   let stPidMatch = st && st.pid && String(st.pid) === pid;
 
   dot.className = 'status-dot ' + (running ? 'running' : 'stopped');
   if (running) {
     txt.textContent = stPidMatch ? `运行中 (检测: ${src})` : `运行中 (检测: ${src}, status 未同步)`;
   } else {
-    // 未运行 — 尝试给出原因
     let reason = '已停止';
     if (st && st.state === 'config_error') reason = `已退出 (配置错误: ${st.error || ''})`;
     else if (st && st.state === 'dir_error') reason = `已退出 (目录不可写: ${st.error || ''})`;
@@ -958,24 +1030,18 @@ async function loadStatus() {
       if (age > 60) reason = `已退出 (status 停更 ${Math.round(age)}s)`;
       else reason = '已停止';
     } else {
-      // 检查二进制是否存在
-      const rBin = await exec(`[ -f ${MOD_DIR}/aether-optext ] && echo ok || echo no`);
-      if ((rBin.stdout || '').trim() !== 'ok') reason = '已退出 (二进制缺失)';
+      if (!bundle.binExists) reason = '已退出 (二进制缺失)';
       else reason = '已停止 (点击「启动」)';
     }
     txt.textContent = reason;
 
-    // 未运行时自动加载 service.log 到诊断卡片 (便于用户立刻看到错误)
-    if (!st || st.state !== 'starting') {
-      const rLog = await exec(`cat ${DATA_DIR}/service.log 2>/dev/null`);
-      const log = (rLog.stdout || '').trim();
-      if (log) {
-        document.getElementById('diagOutput').innerHTML =
-          `<div class="rule-list">
-            <div style="padding:8px 0;color:var(--text-dim);font-size:12px;">service.log (启动脚本输出):</div>
-            <pre style="font-family:var(--mono);font-size:11px;padding:8px;background:var(--surface-2);border-radius:8px;white-space:pre-wrap;word-break:break-all;max-height:280px;overflow:auto;">${escapeHtml(log)}</pre>
-          </div>`;
-      }
+    // 未运行时显示 service.log (已包含在 bundle 中,无需额外 exec)
+    if ((!st || st.state !== 'starting') && bundle.serviceLog) {
+      document.getElementById('diagOutput').innerHTML =
+        `<div class="rule-list">
+          <div style="padding:8px 0;color:var(--text-dim);font-size:12px;">service.log (启动脚本输出):</div>
+          <pre style="font-family:var(--mono);font-size:11px;padding:8px;background:var(--surface-2);border-radius:8px;white-space:pre-wrap;word-break:break-all;max-height:280px;overflow:auto;">${escapeHtml(bundle.serviceLog)}</pre>
+        </div>`;
     }
   }
 
@@ -995,7 +1061,6 @@ async function loadStatus() {
         : '-';
     document.getElementById('kvUpdated').textContent = fmtTime(st.timestamp);
   } else if (running) {
-    // 进程在跑但 status.json 没同步 — 显示基础信息
     document.getElementById('kvUptime').textContent = '(status 未同步)';
     document.getElementById('kvTopo').textContent = '-';
     document.getElementById('kvCpu').textContent = '-';
@@ -1013,11 +1078,19 @@ async function loadStatus() {
     document.getElementById('kvUpdated').textContent = st && st.timestamp ? fmtTime(st.timestamp) : '-';
   }
 
-  // 版本号
-  const rVer = await exec(`grep '^version=' ${MOD_DIR}/module.prop 2>/dev/null | cut -d= -f2`);
-  document.getElementById('versionPill').textContent = (rVer.stdout || '').trim() || 'v?';
+  document.getElementById('versionPill').textContent = bundle.version || 'v?';
 
   statusBusy = false;
+
+  // 自动启动: 如果未运行、不在 starting 状态、二进制存在,且未尝试过自动启动,则自动启动
+  if (!running && bundle.binExists && !autoStartAttempted) {
+    const stState = st && st.state;
+    if (stState !== 'starting') {
+      autoStartAttempted = true;
+      console.log('[Aether] 服务未运行,自动启动...');
+      startService(true); // true = 静默自动启动
+    }
+  }
 }
 
 async function loadConfigSummary() {
@@ -1162,7 +1235,7 @@ let autoRefresh = true;
 let logTimer = null;
 
 async function loadLog() {
-  const r = await exec(`tail -n 500 ${LOG_FILE} 2>/dev/null`);
+  const r = await exec(`tail -n 200 ${LOG_FILE} 2>/dev/null`);
   const viewer = document.getElementById('logViewer');
   if (!r.stdout) {
     viewer.innerHTML = '<div class="empty">日志文件为空或不存在</div>';
@@ -1188,10 +1261,11 @@ async function loadLog() {
 function startLogTimer() {
   stopLogTimer();
   if (autoRefresh) {
+    // 5s 刷新 (原 3s,降频减少卡顿)
     logTimer = setInterval(() => {
       const active = document.querySelector('.tabs button.active');
       if (active && active.dataset.tab === 'log') loadLog();
-    }, 3000);
+    }, 5000);
   }
 }
 function stopLogTimer() {
@@ -1208,40 +1282,53 @@ async function clearLog() {
 // ====================================================================
 //  服务控制
 // ====================================================================
-async function startService() {
-  toast('启动中…');
-  // 清除旧的 status.json,让前端能看到新的 starting 状态
+// startService: 不阻塞 UI — service.sh 内含 sleep,直接 await 会卡死
+// 改为: 后台启动 service.sh,然后异步轮询;UI 立即响应
+// silent=true 时不显示 toast (用于自动启动)
+async function startService(silent) {
+  if (serviceStarting) return; // 防止重复启动
+  serviceStarting = true;
+  if (!silent) toast('启动中…');
+
+  // 清除旧状态文件
   await exec(`rm -f ${STATUS_FILE} ${PID_FILE}`);
-  const r = await exec(`sh ${MOD_DIR}/service.sh`);
-  // 轮询确认启动 (最多 8 次,每次间隔 800ms)
-  let started = false;
-  for (let i = 0; i < 8; i++) {
-    await new Promise(r => setTimeout(r, 800));
-    const { pid } = await detectPid();
-    if (pid) { started = true; break; }
-  }
-  if (started) {
-    toast('服务已启动', 'ok');
-    loadStatus();
-    return;
-  }
-  // 启动失败 — 自动读取 service.log 显示原因
-  const rLog = await exec(`cat ${DATA_DIR}/service.log 2>/dev/null`);
-  const rSt = await exec(`cat ${STATUS_FILE} 2>/dev/null`);
-  let stErr = '';
-  try { const st = JSON.parse(rSt.stdout || '{}'); if (st.error) stErr = `\n[模块错误] ${st.error}`; } catch (e) {}
-  const log = (rLog.stdout || '').trim();
-  if (log || stErr) {
-    document.getElementById('diagOutput').innerHTML =
-      `<div class="rule-list">
-        <div style="padding:8px;color:var(--red);font-weight:600;">启动失败,详情见下:</div>
-        ${stErr ? `<div style="padding:6px 8px;color:var(--red);background:rgba(255,69,58,0.08);border-radius:8px;margin:6px 0;font-family:var(--mono);font-size:12px;">${escapeHtml(stErr)}</div>` : ''}
-        <div style="padding:8px 0;font-size:11px;color:var(--text-dim);">service.log:</div>
-        <pre style="font-family:var(--mono);font-size:11px;padding:8px;background:var(--surface-2);border-radius:8px;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow:auto;">${escapeHtml(log || '(空)')}</pre>
-      </div>`;
-  }
-  toast('启动失败 — 详见诊断输出', 'err');
-  loadStatus();
+
+  // 后台启动 service.sh (用 nohup + & 让 shell 立即返回,不阻塞 JS)
+  // service.sh 内部用 setsid 启动二进制,所以这里不需要等
+  await exec(`nohup sh ${MOD_DIR}/service.sh > /dev/null 2>&1 &`);
+
+  // 异步轮询启动结果 (不阻塞 UI)
+  setTimeout(async () => {
+    let started = false;
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 700));
+      const { pid } = await detectPid();
+      if (pid) { started = true; break; }
+    }
+    serviceStarting = false;
+    if (started) {
+      if (!silent) toast('服务已启动', 'ok');
+      loadStatus();
+    } else {
+      // 启动失败 — 读取 service.log 显示原因
+      const rLog = await exec(`cat ${DATA_DIR}/service.log 2>/dev/null`);
+      const rSt = await exec(`cat ${STATUS_FILE} 2>/dev/null`);
+      let stErr = '';
+      try { const st = JSON.parse(rSt.stdout || '{}'); if (st.error) stErr = `\n[模块错误] ${st.error}`; } catch (e) {}
+      const log = (rLog.stdout || '').trim();
+      if (log || stErr) {
+        document.getElementById('diagOutput').innerHTML =
+          `<div class="rule-list">
+            <div style="padding:8px;color:var(--red);font-weight:600;">启动失败,详情见下:</div>
+            ${stErr ? `<div style="padding:6px 8px;color:var(--red);background:rgba(255,69,58,0.08);border-radius:8px;margin:6px 0;font-family:var(--mono);font-size:12px;">${escapeHtml(stErr)}</div>` : ''}
+            <div style="padding:8px 0;font-size:11px;color:var(--text-dim);">service.log:</div>
+            <pre style="font-family:var(--mono);font-size:11px;padding:8px;background:var(--surface-2);border-radius:8px;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow:auto;">${escapeHtml(log || '(空)')}</pre>
+          </div>`;
+      }
+      if (!silent) toast('启动失败 — 详见诊断输出', 'err');
+      loadStatus();
+    }
+  }, 100); // 100ms 后开始轮询,让 UI 先刷新
 }
 
 async function stopService() {
@@ -1366,10 +1453,14 @@ try {
   else enableEdgeToEdge(true);
 } catch (e) {}
 
-// 启动自检: 检查 exec API 是否可用,不可用则显示醒目横幅
+// 启动自检 + 加载 (优化: 不阻塞 UI,先显示页面,异步加载状态)
+// 关键改动: 只加载状态页 (其他 tab 按需加载),降低轮询频率,避免卡顿
+let _bootExecOk = null; // 缓存 exec 可用性,避免重复测试
 (async function bootstrap() {
+  // 异步检查 exec API,不阻塞页面渲染
   const r = await exec('echo ok');
   const ok = (r.stdout || '').trim() === 'ok';
+  _bootExecOk = ok;
   if (!ok) {
     // 在 app 顶部插入红色横幅
     const app = document.querySelector('.app');
@@ -1390,18 +1481,14 @@ try {
     app.insertBefore(banner, app.firstChild);
     return; // 不再加载其他内容,避免一堆错误 toast
   }
-  // exec 可用 — 正常加载
+  // exec 可用 — 只加载状态页 (其他 tab 按需加载,减少初始开销)
   loadStatus();
-  loadConfig();
-  loadCacheInfo();
-  loadLog();
-  startLogTimer();
 
-  // 状态页 10s 自动刷新
+  // 状态页 15s 自动刷新 (原 10s,降频减少卡顿)
   setInterval(() => {
     const active = document.querySelector('.tabs button.active');
-    if (active && active.dataset.tab === 'status') loadStatus();
-  }, 10000);
+    if (active && active.dataset.tab === 'status' && !statusBusy) loadStatus();
+  }, 15000);
 })();
 </script>
 </body>
