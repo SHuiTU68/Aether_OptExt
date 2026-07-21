@@ -2,7 +2,7 @@ use std::{
     env, fs, io::Write, mem,
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
     collections::HashSet,
 };
 
@@ -18,6 +18,35 @@ use config::*;
 use cpu::*;
 use process::*;
 
+// 信号标志:SIGHUP=重载配置,SIGUSR1=强制重扫
+static FLAG_RELOAD: AtomicBool = AtomicBool::new(false);
+static FLAG_RESCAN: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_signal(sig: i32) {
+    match sig {
+        libc::SIGHUP => FLAG_RELOAD.store(true, Ordering::Release),
+        libc::SIGUSR1 => FLAG_RESCAN.store(true, Ordering::Release),
+        _ => {}
+    }
+}
+
+/// 写入 status.json 供 WebUI 读取
+fn write_status(pid: u32, start_sec: u64, topo: &str, big: &str, little: &str,
+                rules: usize, ebpf_ok: bool, interval: u64,
+                last_procs: usize, last_threads: usize) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let uptime = now.saturating_sub(start_sec);
+    // 转义反斜杠与引号(核心范围不含特殊字符,此处仅作兜底)
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let json = format!(
+        r#"{{"pid":{},"uptime_sec":{},"timestamp":{},"topology":"{}","big":"{}","little":"{}","rules":{},"ebpf":{},"interval":{},"last_bind_procs":{},"last_bind_threads":{}}}"#,
+        pid, uptime, now, esc(topo), esc(big), esc(little),
+        rules, ebpf_ok, interval, last_procs, last_threads
+    );
+    let path = format!("{}/status.json", log::DATA_DIR);
+    let _ = fs::write(&path, json.as_bytes());
+}
+
 fn main() {
     // 进程锁
     std::panic::set_hook(Box::new(|info| {
@@ -29,11 +58,11 @@ fn main() {
             .map(|mut f| write!(f, "[PANIC] {} at {}\n", msg, loc));
     }));
 
-    let _ = fs::create_dir_all("/data/adb/aether");
+    let _ = fs::create_dir_all(log::DATA_DIR);
     fs::write(log::PATH, "").ok();
 
     let args: Vec<String> = env::args().collect();
-    let mut config_path = "/data/adb/aether/threads.json".to_string();
+    let mut config_path = format!("{}/threads.json", log::DATA_DIR);
     let mut interval = 2u64;
     let mut i = 1;
     while i < args.len() {
@@ -45,6 +74,14 @@ fn main() {
         i += 1;
     }
     if interval < 1 { interval = 1; }
+
+    // 注册信号处理
+    unsafe {
+        libc::signal(libc::SIGHUP, on_signal as usize);
+        libc::signal(libc::SIGUSR1, on_signal as usize);
+        // 忽略 SIGPIPE,避免写已关闭 fd 退出
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
 
     info!("CPU: {} cpuset={}", cpu::present(), Path::new("/dev/cpuset").exists());
 
@@ -89,7 +126,7 @@ fn main() {
     let bpf = bpf::probe(cfg.ebpf);
     if bpf.ok { info!("eBPF: 可用"); }
 
-    let _ = fs::create_dir_all("/data/adb/aether");
+    let _ = fs::create_dir_all(log::DATA_DIR);
 
     // 启动时自动分配
     let unknown = process::scan_unknown(&cfg.pkg_set, &all_w);
@@ -102,14 +139,43 @@ fn main() {
         info!("自动分配完成: {} 个", unknown.len());
     }
 
+    let self_pid = std::process::id();
+    let start_sec = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+
     let mut lc = 0i32;
     let mut cnt = 0i32;
     let mut cache_scan = 0i32;
     let mut cache: Vec<(i32, String, Vec<(i32, String, String)>)> = Vec::new();
     let rf = AtomicBool::new(false);
+    let mut last_procs = 0usize;
+    let mut last_threads = 0usize;
     info!("启动");
 
+    write_status(self_pid, start_sec, &topo, &big, &little, cfg.rules.len(), bpf.ok, interval, 0, 0);
+
     loop {
+        // 信号:重载配置
+        if FLAG_RELOAD.swap(false, Ordering::AcqRel) {
+            match AppConfig::load(&config_path) {
+                Some(new_cfg) => {
+                    cfg = new_cfg;
+                    all_w = cfg.wild.clone();
+                    cache::merge(&mut cfg.pkg_set, &mut cfg.rules);
+                    info!("配置已重载: {} 条规则 (含缓存)", cfg.rules.len());
+                    // 立即重扫
+                    cache = process::scan(&cfg.rules, &cfg.pkg_set, &all_w);
+                    rf.store(false, Ordering::Release);
+                }
+                None => error!("重载失败:配置解析错误"),
+            }
+        }
+        // 信号:强制重扫
+        if FLAG_RESCAN.swap(false, Ordering::AcqRel) {
+            info!("收到强制重扫信号");
+            cache = process::scan(&cfg.rules, &cfg.pkg_set, &all_w);
+            rf.store(false, Ordering::Release);
+        }
+
         // eBPF map 读取
         if bpf.map_fd >= 0 {
             for pid in bpf::read_map(bpf.map_fd) {
@@ -162,13 +228,17 @@ fn main() {
 
         cnt -= 1;
         if cnt < 1 {
-            process::apply(&cache, &rf);
+            (last_procs, last_threads) = process::apply(&cache, &rf);
             if rf.load(Ordering::Acquire) {
                 cache = process::scan(&cfg.rules, &cfg.pkg_set, &all_w);
                 rf.store(false, Ordering::Release);
             }
             cnt = 5;
         }
+
+        // 写状态文件
+        write_status(self_pid, start_sec, &topo, &big, &little,
+                     cfg.rules.len(), bpf.ok, interval, last_procs, last_threads);
 
         std::thread::sleep(Duration::from_secs(interval));
     }

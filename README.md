@@ -35,23 +35,37 @@ Magisk / KernelSU 中刷入 `out/Aether-OptExt_*.zip` 即可。
 
 模块附带一个 HyperOS / miuix 视觉风格的 WebUI,在 **KernelSU / APatch / Magisk Delta** 管理器中打开本模块即可使用。功能:
 
-- **状态**:进程 PID / 运行时长 / CPU 拓扑 / 大核小核 / 规则数 / eBPF 状态(10 秒自动刷新)
-- **配置**:在线编辑 `threads.json`,校验 JSON,保存后自动重启服务生效
-- **日志**:实时查看日志(INFO/ERROR/PANIC 颜色区分),自动滚动,清空
-- **控制**:启动 / 停止 / 重启服务,内置 Shell 命令执行器
+- **状态**:进程 PID / 运行时长 / CPU 拓扑 / 大核小核 / 规则数 / eBPF 状态 / 上次绑核统计 / 状态更新时间(读取模块实时写入的 `status.json`,10 秒自动刷新)
+- **配置**:在线编辑 `threads.json`,校验 JSON,「保存」仅写文件,「保存并应用」写文件后发送 SIGHUP 热重载(无需重启服务)
+- **日志**:实时查看日志(INFO/ERROR/PANIC 颜色区分),3 秒自动刷新,按级别过滤,清空
+- **控制**:
+  - 服务控制:启动 / 停止 / 重启(启动后轮询确认 PID)
+  - 热控制:重载配置(SIGHUP)/ 强制扫描(SIGUSR1),无需重启服务
+  - 内置 Shell 命令执行器
 
-> WebUI 走 KernelSU 标准 `ksu.exec` API,无需任何额外权限。数据全部在 `/data/adb/aether/` 下,与模块本体分离。
+> WebUI 走 KernelSU 标准 `ksu.exec` API,无需任何额外权限。数据全部在 `/storage/emulated/0/Android/Aether/` 下,与模块本体分离。模块每轮循环写入 `status.json`,WebUI 直接读取,避免解析日志的脆弱性。
 
 ### 运行时路径
 
 | 项目 | 路径 |
 |:---|:---|
-| 配置文件 | `/data/adb/aether/threads.json` |
-| 日志文件 | `/data/adb/aether/threads_log.txt` |
-| 自动分配缓存 | `/data/adb/aether/threads_cache` |
+| 配置文件 | `/storage/emulated/0/Android/Aether/threads.json` |
+| 日志文件 | `/storage/emulated/0/Android/Aether/threads_log.txt` |
+| 状态文件 | `/storage/emulated/0/Android/Aether/status.json` |
+| 自动分配缓存 | `/storage/emulated/0/Android/Aether/threads_cache` |
 | 模块目录 | `/data/adb/modules/aether-optext` |
 
-> 自 v1.1 起,数据目录从 `/sdcard/Android/Aether` 迁移至 `/data/adb/aether`,以避免 scoped storage 限制并使模块更新不会覆盖用户配置。安装时若检测到旧路径存在 `threads.json`,会自动迁移。
+> 数据目录位于 `/storage/emulated/0/Android/Aether`(即 `/sdcard/Android/Aether`),用户可直接用文件管理器查看/编辑配置。安装时若检测到旧路径 `/data/adb/aether/threads.json` 存在,会自动迁移。
+
+### 信号控制
+
+| 信号 | 作用 |
+|:---|:---|
+| `SIGHUP` | 热重载配置(重新读取 `threads.json` + 缓存,立即重扫) |
+| `SIGUSR1` | 强制重扫 `/proc`,立即应用绑核 |
+| `SIGPIPE` | 已忽略(避免写已关闭 fd 退出) |
+
+WebUI 的「重载配置」「强制扫描」按钮即通过 `kill -HUP` / `kill -USR1` 发送信号。
 
 ## 配置文件格式
 
@@ -98,7 +112,7 @@ CONFIG_PERF_EVENTS=y
 
 ### 自动分配缓存
 
-当配置文件中未收录某个用户应用时，自动扫描其线程，按线程名估算负载后分配核心，保存到 `/data/adb/aether/threads_cache`，下次启动自动合并到规则集。
+当配置文件中未收录某个用户应用时，自动扫描其线程，按线程名估算负载后分配核心，保存到 `/storage/emulated/0/Android/Aether/threads_cache`，下次启动自动合并到规则集。
 
 **负载分级：**
 

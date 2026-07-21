@@ -116,8 +116,8 @@ pub fn scan_unknown(set: &HashSet<String>, wild: &[String]) -> Vec<(i32, String,
     result
 }
 
-/// 应用绑核
-pub fn apply(procs: &[(i32, String, Vec<(i32, String, String)>)], rescan: &std::sync::atomic::AtomicBool) {
+/// 应用绑核,返回 (进程数, 线程数)
+pub fn apply(procs: &[(i32, String, Vec<(i32, String, String)>)], rescan: &std::sync::atomic::AtomicBool) -> (usize, usize) {
     let mut seen_cpus = std::collections::HashSet::<String>::new();
     let mut n = 0usize;
     for (_, _, th) in procs {
@@ -157,4 +157,5 @@ pub fn apply(procs: &[(i32, String, Vec<(i32, String, String)>)], rescan: &std::
         }
     }
     info!("已绑核 {} 进程 {} 线程", procs.len(), n);
+    (procs.len(), n)
 }

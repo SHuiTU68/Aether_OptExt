@@ -6,17 +6,21 @@ set_perm $MODPATH/aether-optext 0 0 0755
 [ -d "$MODPATH/webroot" ] && set_perm_recursive $MODPATH/webroot 0 0 0755 0644
 
 # 数据目录 (持久化,模块更新不覆盖)
-DATA_DIR=/data/adb/aether
+DATA_DIR=/storage/emulated/0/Android/Aether
+OLD_DIR=/data/adb/aether
 mkdir -p "$DATA_DIR" 2>/dev/null
 
-# 清除旧缓存 (旧位置 + 新位置)
-rm -f /sdcard/Android/Aether/threads_cache 2>/dev/null
-rm -f "$DATA_DIR/threads_cache" 2>/dev/null
+# 清除旧缓存 (旧位置)
+rm -f "$OLD_DIR/threads_cache" 2>/dev/null
 
-# 迁移旧配置 (从 /sdcard/Android/Aether -> /data/adb/aether)
-if [ -f /sdcard/Android/Aether/threads.json ] && [ ! -f "$DATA_DIR/threads.json" ]; then
-    cp /sdcard/Android/Aether/threads.json "$DATA_DIR/threads.json" 2>/dev/null
+# 迁移旧配置 (从 /data/adb/aether 回退到 /storage/emulated/0/Android/Aether)
+if [ -f "$OLD_DIR/threads.json" ] && [ ! -f "$DATA_DIR/threads.json" ]; then
+    cp "$OLD_DIR/threads.json" "$DATA_DIR/threads.json" 2>/dev/null
     ui_print "- 已迁移旧配置文件"
+fi
+# 迁移缓存
+if [ -f "$OLD_DIR/threads_cache" ] && [ ! -f "$DATA_DIR/threads_cache" ]; then
+    cp "$OLD_DIR/threads_cache" "$DATA_DIR/threads_cache" 2>/dev/null
 fi
 
 # 按频率检测 CPU 拓扑

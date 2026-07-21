@@ -287,6 +287,8 @@ textarea:focus { outline: none; border-color: var(--accent); background: var(--s
   text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.err { background: rgba(255, 69, 58, 0.92); }
+.toast.ok { background: rgba(52, 199, 89, 0.92); }
 
 /* ============ Tab panels ============ */
 .tab-panel { display: none; animation: fade 0.2s; }
@@ -296,7 +298,7 @@ textarea:focus { outline: none; border-color: var(--accent); background: var(--s
 .loading { text-align: center; padding: 20px; color: var(--text-dim); font-size: 13px; }
 .muted { color: var(--text-dim); font-size: 12px; margin-top: 8px; }
 .empty { text-align: center; color: var(--text-dim); font-size: 13px; padding: 20px 8px; }
-.row-actions { display: flex; gap: 8px; margin-top: 12px; }
+.row-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .row-actions button { flex: 0 0 auto; min-width: 0; padding: 9px 14px; font-size: 13px; }
 .row-actions button.flex { flex: 1; }
 
@@ -355,6 +357,30 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
 }
 .pill.ok { background: rgba(52, 199, 89, 0.12); color: var(--green); }
 .pill.err { background: rgba(255, 69, 58, 0.12); color: var(--red); }
+.pill.warn { background: rgba(255, 159, 10, 0.12); color: var(--orange); }
+
+/* ============ Spinner ============ */
+.spinner {
+  display: inline-block;
+  width: 14px; height: 14px;
+  border: 2px solid var(--surface-3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ============ Log filter chips ============ */
+.filter-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.filter-row .chip {
+  font-size: 11px; padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2); color: var(--text-dim);
+  cursor: pointer; user-select: none;
+  border: 1px solid transparent;
+}
+.filter-row .chip.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -378,9 +404,14 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
           运行状态
         </span>
-        <button class="icon-btn" id="refreshStatus" title="刷新">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        </button>
+        <span style="display:flex;gap:6px;align-items:center;">
+          <button class="icon-btn" id="rescanBtn" title="强制扫描 (SIGUSR1)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.39 0 4.68.94 6.36 2.64"/><polyline points="21 3 21 9 15 9"/></svg>
+          </button>
+          <button class="icon-btn" id="refreshStatus" title="刷新">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+        </span>
       </div>
       <div class="kv">
         <div class="k">进程</div><div class="v" id="kvProc">-</div>
@@ -390,6 +421,8 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
         <div class="k">大核 / 小核</div><div class="v" id="kvCpu">-</div>
         <div class="k">规则数</div><div class="v" id="kvRules">-</div>
         <div class="k">eBPF</div><div class="v" id="kvBpf">-</div>
+        <div class="k">上次绑核</div><div class="v" id="kvBind">-</div>
+        <div class="k">状态更新</div><div class="v" id="kvUpdated">-</div>
       </div>
     </div>
 
@@ -416,9 +449,12 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
       <div class="row-actions">
         <button id="loadConfig" class="flex">重新加载</button>
         <button id="validateConfig" class="flex">校验 JSON</button>
-        <button id="saveConfig" class="primary flex">保存并重启</button>
       </div>
-      <div class="muted">保存后会自动重启服务以应用新配置。</div>
+      <div class="row-actions">
+        <button id="saveConfig" class="primary flex">保存</button>
+        <button id="saveAndApply" class="flex">保存并应用</button>
+      </div>
+      <div class="muted"><b>保存</b>:仅写入文件。<b>保存并应用</b>:写入后发送 SIGHUP 热重载,无需重启服务。</div>
     </div>
 
     <div class="card">
@@ -444,12 +480,18 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
         </span>
         <span style="display:flex;gap:6px;align-items:center;">
           <label class="muted" style="margin:0;display:flex;align-items:center;gap:4px;font-size:12px;">
-            <input type="checkbox" id="autoScroll" checked style="margin:0;"> 自动滚动
+            <input type="checkbox" id="autoRefresh" checked style="margin:0;"> 自动刷新
           </label>
           <button class="icon-btn" id="refreshLog" title="刷新">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
         </span>
+      </div>
+      <div class="filter-row">
+        <span class="chip active" data-level="all">全部</span>
+        <span class="chip" data-level="info">INFO</span>
+        <span class="chip" data-level="err">ERROR</span>
+        <span class="chip" data-level="panic">PANIC</span>
       </div>
       <div id="logViewer" class="log-viewer"><div class="loading">加载中…</div></div>
       <div class="row-actions">
@@ -475,10 +517,25 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
 
     <div class="card">
       <div class="title"><span class="ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.39 0 4.68.94 6.36 2.64"/><polyline points="21 3 21 9 15 9"/></svg>
+        热控制 (无需重启)
+      </span></div>
+      <div class="btn-row">
+        <button id="reloadSvc">重载配置 (HUP)</button>
+        <button id="rescanSvc">强制扫描 (USR1)</button>
+      </div>
+      <div class="muted">
+        <b>重载配置</b>:重新读取 threads.json + 缓存,立即重扫。<br>
+        <b>强制扫描</b>:立即扫描 /proc 应用并应用绑核。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="title"><span class="ico">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
         Shell 命令
       </span><span class="muted" style="margin:0;font-size:11px;">以 root 执行</span></div>
-      <textarea id="shellInput" spellcheck="false" placeholder="例如:cat /data/adb/aether/threads.json | head" style="min-height:64px;"></textarea>
+      <textarea id="shellInput" spellcheck="false" placeholder="例如:cat /storage/emulated/0/Android/Aether/status.json" style="min-height:64px;"></textarea>
       <div class="row-actions">
         <button id="runShell" class="primary">执行</button>
         <button id="clearShell">清空</button>
@@ -494,7 +551,7 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
       <div class="kv">
         <div class="k">模块</div><div class="v">Aether OptExt</div>
         <div class="k">作者</div><div class="v">NetizenNemo</div>
-        <div class="k">数据目录</div><div class="v">/data/adb/aether</div>
+        <div class="k">数据目录</div><div class="v">/storage/emulated/0/Android/Aether</div>
         <div class="k">模块目录</div><div class="v">/data/adb/modules/aether-optext</div>
         <div class="k">许可证</div><div class="v">GPL-3.0</div>
       </div>
@@ -533,11 +590,12 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
 //    2. 中版同步:返回 {errno, stdout, stderr}
 //    3. 旧版 callback:ksu.exec(cmd, optsJson, callback)
 // ====================================================================
-const DATA_DIR = '/data/adb/aether';
+const DATA_DIR = '/storage/emulated/0/Android/Aether';
 const MOD_DIR = '/data/adb/modules/aether-optext';
 const LOG_FILE = DATA_DIR + '/threads_log.txt';
 const CONFIG_FILE = DATA_DIR + '/threads.json';
 const CACHE_FILE = DATA_DIR + '/threads_cache';
+const STATUS_FILE = DATA_DIR + '/status.json';
 
 function exec(cmd, opts = {}) {
   return new Promise((resolve) => {
@@ -621,11 +679,31 @@ function toast(msg, type = '') {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = 'toast show ' + type;
-  setTimeout(() => { el.className = 'toast ' + type; }, 2200);
+  setTimeout(() => { el.className = 'toast ' + type; }, 2400);
 }
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtUptime(sec) {
+  if (!sec || sec < 0) return '-';
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  return `${m}m ${s}s`;
+}
+
+function fmtTime(ts) {
+  if (!ts) return '-';
+  const d = new Date(ts * 1000);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
 }
 
 // ====================================================================
@@ -644,72 +722,69 @@ document.querySelectorAll('.tabs button').forEach(btn => {
 });
 
 // ====================================================================
-//  状态页
+//  状态页 — 优先读 status.json,失败则回退到旧方法
 // ====================================================================
+let statusBusy = false;
 async function loadStatus() {
-  // 进程状态
-  const rPid = await exec('pidof aether-optext');
-  const pid = (rPid.stdout || '').trim().split(/\s+/)[0];
-  const running = !!pid && /^\d+$/.test(pid);
+  if (statusBusy) return;
+  statusBusy = true;
+
+  // 先尝试读 status.json (由模块每轮循环写入,最可靠)
+  const rSt = await exec(`cat ${STATUS_FILE} 2>/dev/null`);
+  let st = null;
+  if (rSt.stdout && rSt.stdout.trim()) {
+    try { st = JSON.parse(rSt.stdout); } catch (e) { st = null; }
+  }
 
   const dot = document.getElementById('statusDot');
   const txt = document.getElementById('statusText');
-  dot.className = 'status-dot ' + (running ? 'running' : 'stopped');
-  txt.textContent = running ? '运行中' : '已停止';
 
-  document.getElementById('kvProc').textContent = running ? 'aether-optext' : '-';
-  document.getElementById('kvPid').textContent = pid || '-';
+  if (st && st.pid) {
+    // 验证 PID 是否仍存活
+    const rKill = await exec(`kill -0 ${st.pid} 2>/dev/null && echo ok || echo no`);
+    const alive = (rKill.stdout || '').trim() === 'ok';
+    dot.className = 'status-dot ' + (alive ? 'running' : 'stopped');
+    txt.textContent = alive ? '运行中' : '已停止 (PID 不存在)';
 
-  if (running) {
-    // uptime: process start time from /proc/<pid>/stat field 22 (jiffies since boot)
-    const rStart = await exec(`cut -d' ' -f22 /proc/${pid}/stat`);
-    const startTicks = parseInt((rStart.stdout || '').trim());
-    if (!isNaN(startTicks)) {
-      const rHz = await exec('getconf CLK_TCK');
-      const hz = parseInt((rHz.stdout || '').trim()) || 100;
-      const rUp = await exec('cat /proc/uptime');
-      const uptime = parseFloat((rUp.stdout || '0').split(' ')[0]);
-      const elapsed = Math.max(0, uptime - startTicks / hz);
-      const h = Math.floor(elapsed / 3600);
-      const m = Math.floor((elapsed % 3600) / 60);
-      const s = Math.floor(elapsed % 60);
-      document.getElementById('kvUptime').textContent = `${h}h ${m}m ${s}s`;
-    } else {
-      document.getElementById('kvUptime').textContent = '-';
-    }
+    document.getElementById('kvProc').textContent = 'aether-optext';
+    document.getElementById('kvPid').textContent = alive ? st.pid : '-';
+    document.getElementById('kvUptime').textContent = alive ? fmtUptime(st.uptime_sec) : '-';
+    document.getElementById('kvTopo').textContent = st.topology || '-';
+    document.getElementById('kvCpu').textContent = (st.big || st.little) ? `大=${st.big} 小=${st.little}` : '-';
+    document.getElementById('kvRules').textContent = st.rules ?? '-';
+    document.getElementById('kvBpf').innerHTML = st.ebpf
+      ? '<span class="tag ok">可用</span>'
+      : '<span class="tag warn">未启用</span>';
+    document.getElementById('kvBind').textContent =
+      (st.last_bind_procs || st.last_bind_threads)
+        ? `${st.last_bind_procs} 进程 / ${st.last_bind_threads} 线程`
+        : '-';
+    document.getElementById('kvUpdated').textContent = fmtTime(st.timestamp);
   } else {
+    // 回退:用 pidof + /proc 推断
+    const rPid = await exec('pidof aether-optext');
+    const pid = (rPid.stdout || '').trim().split(/\s+/)[0];
+    const running = !!pid && /^\d+$/.test(pid);
+
+    dot.className = 'status-dot ' + (running ? 'running' : 'stopped');
+    txt.textContent = running ? '运行中' : '已停止';
+
+    document.getElementById('kvProc').textContent = running ? 'aether-optext' : '-';
+    document.getElementById('kvPid').textContent = pid || '-';
     document.getElementById('kvUptime').textContent = '-';
+    document.getElementById('kvTopo').textContent = '-';
+    document.getElementById('kvCpu').textContent = '-';
+    document.getElementById('kvRules').textContent = '-';
+    document.getElementById('kvBpf').textContent = '-';
+    document.getElementById('kvBind').textContent = '-';
+    document.getElementById('kvUpdated').textContent = '(status.json 不可用)';
   }
 
-  // CPU 拓扑
-  const rTopo = await exec(`for p in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
-    [ -d "\$p" ] || continue
-    cat "\$p/related_cpus" 2>/dev/null
-  done`);
-  const policies = (rTopo.stdout || '').trim().split('\n').filter(Boolean);
-  const counts = policies.map(line => {
-    const t = line.trim();
-    if (t.includes('-')) {
-      const [s, e] = t.split('-');
-      return (parseInt(e) - parseInt(s) + 1) || 1;
-    }
-    return t.split(/[ ,]/).filter(Boolean).length;
-  });
-  const topo = counts.join('+') || 'unknown';
-  document.getElementById('kvTopo').textContent = topo;
-
-  // 大核小核 + 规则数 + eBPF 从日志提取
-  const rLog = await exec(`tail -n 200 ${LOG_FILE}`);
-  const logText = rLog.stdout || '';
-  const mCpu = logText.match(/拓扑:.*大核=(\S+)\s+小核=(\S+)/);
-  document.getElementById('kvCpu').textContent = mCpu ? `大=${mCpu[1]} 小=${mCpu[2]}` : '-';
-  const mRules = logText.match(/共\s+(\d+)\s+条规则/);
-  document.getElementById('kvRules').textContent = mRules ? mRules[1] : '-';
-  document.getElementById('kvBpf').textContent = logText.includes('eBPF: 可用') ? '可用' : (logText.includes('eBPF') ? '未启用' : '-');
-
-  // 版本
+  // 版本号
   const rVer = await exec(`grep '^version=' ${MOD_DIR}/module.prop 2>/dev/null | cut -d= -f2`);
   document.getElementById('versionPill').textContent = (rVer.stdout || '').trim() || 'v?';
+
+  statusBusy = false;
 }
 
 async function loadConfigSummary() {
@@ -766,33 +841,49 @@ async function loadConfig() {
   ta.value = r.stdout;
   const rMtime = await exec(`stat -c '%y' ${CONFIG_FILE} 2>/dev/null`);
   document.getElementById('configMtime').textContent = rMtime.stdout ? `修改于 ${rMtime.stdout.split('.')[0]}` : '';
-  toast('已加载配置');
+  toast('已加载配置', 'ok');
 }
 
-async function saveConfig() {
+// 仅写入文件,不重启
+async function saveConfigOnly() {
   const text = document.getElementById('configText').value;
+  // 先校验
+  try { JSON.parse(text); }
+  catch (e) { toast('JSON 错误,未保存: ' + e.message, 'err'); return false; }
   // 用 base64 编码避开 heredoc 转义问题
   const b64 = btoa(unescape(encodeURIComponent(text)));
   const tmp = CONFIG_FILE + '.tmp';
   const r = await exec(`echo '${b64}' | base64 -d > ${tmp}`);
-  if (r.errno !== 0) {
-    toast('写入失败: ' + r.stderr, 'err');
-    return;
-  }
+  if (r.errno !== 0) { toast('写入失败: ' + r.stderr, 'err'); return false; }
   const r2 = await exec(`mv ${tmp} ${CONFIG_FILE} && chmod 644 ${CONFIG_FILE}`);
-  if (r2.errno !== 0) {
-    toast('应用失败: ' + r2.stderr, 'err');
-    return;
+  if (r2.errno !== 0) { toast('应用失败: ' + r2.stderr, 'err'); return false; }
+  return true;
+}
+
+async function saveConfig() {
+  if (await saveConfigOnly()) {
+    toast('已保存到文件', 'ok');
+    loadConfigSummary();
   }
-  toast('已保存,重启中…');
-  await restartService();
-  loadConfigSummary();
+}
+
+// 保存并发送 SIGHUP 热重载
+async function saveAndApply() {
+  if (!await saveConfigOnly()) return;
+  toast('已保存,发送重载信号…');
+  const r = await exec(`kill -HUP $(pidof aether-optext) 2>/dev/null`);
+  if (r.errno === 0) {
+    toast('已发送 SIGHUP,配置已热重载', 'ok');
+  } else {
+    toast('信号发送失败,服务可能未运行', 'err');
+  }
+  setTimeout(() => { loadStatus(); loadConfigSummary(); }, 800);
 }
 
 function validateConfig() {
   try {
     JSON.parse(document.getElementById('configText').value);
-    toast('JSON 语法正确');
+    toast('JSON 语法正确', 'ok');
   } catch (e) {
     toast('JSON 错误: ' + e.message, 'err');
   }
@@ -825,15 +916,18 @@ async function viewCache() {
 async function clearCache() {
   if (!confirm('确定要清除自动分配缓存吗?')) return;
   const r = await exec(`rm -f ${CACHE_FILE}`);
-  if (r.errno === 0) toast('缓存已清除');
+  if (r.errno === 0) toast('缓存已清除', 'ok');
   else toast('清除失败: ' + r.stderr, 'err');
   loadCacheInfo();
 }
 
 // ====================================================================
-//  日志
+//  日志 (带过滤 + 自动刷新)
 // ====================================================================
-let autoScroll = true;
+let logLevel = 'all';
+let autoRefresh = true;
+let logTimer = null;
+
 async function loadLog() {
   const r = await exec(`tail -n 500 ${LOG_FILE} 2>/dev/null`);
   const viewer = document.getElementById('logViewer');
@@ -842,19 +936,39 @@ async function loadLog() {
     return;
   }
   const html = r.stdout.split('\n').map(line => {
-    if (line.includes('[PANIC]')) return `<div class="line-panic">${escapeHtml(line)}</div>`;
-    if (line.includes('[ERROR]')) return `<div class="line-err">${escapeHtml(line)}</div>`;
-    if (line.includes('[INFO]')) return `<div class="line-info">${escapeHtml(line)}</div>`;
+    const isPanic = line.includes('[PANIC]');
+    const isErr = line.includes('[ERROR]');
+    const isInfo = line.includes('[INFO]');
+    if (logLevel === 'panic' && !isPanic) return '';
+    if (logLevel === 'err' && !isErr) return '';
+    if (logLevel === 'info' && !isInfo) return '';
+    if (isPanic) return `<div class="line-panic">${escapeHtml(line)}</div>`;
+    if (isErr) return `<div class="line-err">${escapeHtml(line)}</div>`;
+    if (isInfo) return `<div class="line-info">${escapeHtml(line)}</div>`;
     return `<div>${escapeHtml(line)}</div>`;
   }).join('');
-  viewer.innerHTML = html;
-  if (autoScroll) viewer.scrollTop = viewer.scrollHeight;
+  viewer.innerHTML = html || '<div class="empty">无匹配日志</div>';
+  // 自动滚动到底部
+  viewer.scrollTop = viewer.scrollHeight;
+}
+
+function startLogTimer() {
+  stopLogTimer();
+  if (autoRefresh) {
+    logTimer = setInterval(() => {
+      const active = document.querySelector('.tabs button.active');
+      if (active && active.dataset.tab === 'log') loadLog();
+    }, 3000);
+  }
+}
+function stopLogTimer() {
+  if (logTimer) { clearInterval(logTimer); logTimer = null; }
 }
 
 async function clearLog() {
   if (!confirm('确定清空日志?')) return;
   await exec(`> ${LOG_FILE}`);
-  toast('已清空');
+  toast('已清空', 'ok');
   loadLog();
 }
 
@@ -864,20 +978,80 @@ async function clearLog() {
 async function startService() {
   toast('启动中…');
   await exec(`sh ${MOD_DIR}/service.sh`);
-  setTimeout(() => { loadStatus(); toast('已发送启动命令'); }, 1000);
+  // 轮询确认启动 (最多 5 次,每次间隔 800ms)
+  for (let i = 0; i < 5; i++) {
+    await new Promise(r => setTimeout(r, 800));
+    const rPid = await exec('pidof aether-optext');
+    if ((rPid.stdout || '').trim()) {
+      toast('服务已启动', 'ok');
+      loadStatus();
+      return;
+    }
+  }
+  toast('启动超时,请查看日志', 'err');
+  loadStatus();
 }
 
 async function stopService() {
   await exec(`pkill -f aether-optext`);
-  setTimeout(() => { loadStatus(); toast('已停止'); }, 600);
+  await new Promise(r => setTimeout(r, 600));
+  const rPid = await exec('pidof aether-optext');
+  if ((rPid.stdout || '').trim()) {
+    toast('停止失败,PID 仍存在', 'err');
+  } else {
+    toast('已停止', 'ok');
+  }
+  loadStatus();
 }
 
 async function restartService() {
+  toast('重启中…');
   await exec(`pkill -f aether-optext`);
   await new Promise(r => setTimeout(r, 600));
   await exec(`sh ${MOD_DIR}/service.sh`);
-  setTimeout(() => { loadStatus(); }, 1000);
-  return true;
+  for (let i = 0; i < 5; i++) {
+    await new Promise(r => setTimeout(r, 800));
+    const rPid = await exec('pidof aether-optext');
+    if ((rPid.stdout || '').trim()) {
+      toast('服务已重启', 'ok');
+      loadStatus();
+      return;
+    }
+  }
+  toast('重启超时,请查看日志', 'err');
+  loadStatus();
+}
+
+// 发送 SIGHUP 热重载
+async function reloadService() {
+  const rPid = await exec('pidof aether-optext');
+  if (!(rPid.stdout || '').trim()) {
+    toast('服务未运行', 'err');
+    return;
+  }
+  const r = await exec(`kill -HUP $(pidof aether-optext)`);
+  if (r.errno === 0) {
+    toast('已发送 SIGHUP,配置已热重载', 'ok');
+    setTimeout(() => loadStatus(), 800);
+  } else {
+    toast('信号发送失败: ' + r.stderr, 'err');
+  }
+}
+
+// 发送 SIGUSR1 强制重扫
+async function rescanService() {
+  const rPid = await exec('pidof aether-optext');
+  if (!(rPid.stdout || '').trim()) {
+    toast('服务未运行', 'err');
+    return;
+  }
+  const r = await exec(`kill -USR1 $(pidof aether-optext)`);
+  if (r.errno === 0) {
+    toast('已发送 SIGUSR1,强制重扫中…', 'ok');
+    setTimeout(() => loadStatus(), 1000);
+  } else {
+    toast('信号发送失败: ' + r.stderr, 'err');
+  }
 }
 
 // ====================================================================
@@ -897,23 +1071,40 @@ async function runShell() {
 //  绑定
 // ====================================================================
 document.getElementById('refreshStatus').onclick = loadStatus;
+document.getElementById('rescanBtn').onclick = rescanService;
 document.getElementById('loadConfig').onclick = loadConfig;
 document.getElementById('saveConfig').onclick = saveConfig;
+document.getElementById('saveAndApply').onclick = saveAndApply;
 document.getElementById('validateConfig').onclick = validateConfig;
 document.getElementById('loadCache').onclick = viewCache;
 document.getElementById('clearCache').onclick = clearCache;
 document.getElementById('refreshLog').onclick = loadLog;
 document.getElementById('clearLog').onclick = clearLog;
-document.getElementById('autoScroll').onchange = e => { autoScroll = e.target.checked; };
+document.getElementById('autoRefresh').onchange = e => {
+  autoRefresh = e.target.checked;
+  if (autoRefresh) startLogTimer(); else stopLogTimer();
+};
 document.getElementById('startSvc').onclick = startService;
 document.getElementById('stopSvc').onclick = stopService;
 document.getElementById('restartSvc').onclick = restartService;
+document.getElementById('reloadSvc').onclick = reloadService;
+document.getElementById('rescanSvc').onclick = rescanService;
 document.getElementById('runShell').onclick = runShell;
 document.getElementById('clearShell').onclick = () => {
   document.getElementById('shellInput').value = '';
   document.getElementById('shellOutput').style.display = 'none';
   document.getElementById('shellOutput').textContent = '';
 };
+
+// 日志过滤芯片
+document.querySelectorAll('.filter-row .chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.filter-row .chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    logLevel = chip.dataset.level;
+    loadLog();
+  });
+});
 
 // 启用 edge-to-edge
 try {
@@ -927,6 +1118,7 @@ loadStatus();
 loadConfig();
 loadCacheInfo();
 loadLog();
+startLogTimer();
 
 // 状态页 10s 自动刷新
 setInterval(() => {
