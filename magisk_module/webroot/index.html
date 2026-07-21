@@ -545,19 +545,6 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
 
     <div class="card">
       <div class="title"><span class="ico">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-        Shell 命令
-      </span><span class="muted" style="margin:0;font-size:11px;">以 root 执行</span></div>
-      <textarea id="shellInput" spellcheck="false" placeholder="例如:cat /storage/emulated/0/Android/Aether/status.json" style="min-height:64px;"></textarea>
-      <div class="row-actions">
-        <button id="runShell" class="primary">执行</button>
-        <button id="clearShell">清空</button>
-      </div>
-      <pre id="shellOutput" class="log-viewer" style="margin-top:12px;display:none;"></pre>
-    </div>
-
-    <div class="card">
-      <div class="title"><span class="ico">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
         关于
       </span></div>
@@ -1094,17 +1081,28 @@ async function loadStatus() {
 }
 
 async function loadConfigSummary() {
-  const r = await exec(`cat ${CONFIG_FILE} 2>/dev/null`);
+  // 用 base64 编码读取,避免大 JSON 中的中文/特殊字符在 evaluateJavascript 回调中出错
+  const r = await exec(`[ -f ${CONFIG_FILE} ] && base64 ${CONFIG_FILE} || echo "__EMPTY__"`);
   const pill = document.getElementById('configStatusPill');
   const el = document.getElementById('configSummary');
-  if (!r.stdout || !r.stdout.trim()) {
+  const raw = (r.stdout || '').trim();
+  if (!raw || raw === '__EMPTY__') {
     el.innerHTML = '<div class="empty">配置文件不存在或为空</div>';
     pill.textContent = '未配置';
     pill.className = 'pill err';
     return;
   }
+  let jsonText;
   try {
-    const data = JSON.parse(r.stdout);
+    jsonText = decodeURIComponent(escape(atob(raw)));
+  } catch (e) {
+    el.innerHTML = `<div class="empty">配置解码失败 (base64): ${escapeHtml(e.message)}</div>`;
+    pill.textContent = '解码错误';
+    pill.className = 'pill err';
+    return;
+  }
+  try {
+    const data = JSON.parse(jsonText);
     const rules = data.rules || (Array.isArray(data) ? data : []);
     const features = data.features || {};
     let html = '<div class="kv">';
@@ -1138,16 +1136,47 @@ async function loadConfigSummary() {
 async function loadConfig() {
   const ta = document.getElementById('configText');
   ta.value = '加载中…';
-  const r = await exec(`cat ${CONFIG_FILE}`);
-  if (r.errno !== 0 && !r.stdout) {
+  ta.disabled = true;
+  // 用 base64 编码读取,避免大 JSON 中的中文/特殊字符/换行在 evaluateJavascript 回调中出问题
+  // 同时合并 stat 获取修改时间,减少 IPC 往返
+  const r = await exec(`if [ -f ${CONFIG_FILE} ]; then
+  base64 ${CONFIG_FILE}
+  echo "---MTIME---"
+  stat -c '%y' ${CONFIG_FILE} 2>/dev/null
+else
+  echo "---NOTEXIST---"
+fi`);
+  ta.disabled = false;
+  if (!r.stdout) {
     ta.value = '';
-    toast('配置文件读取失败: ' + r.stderr, 'err');
+    toast('配置文件读取失败: ' + (r.stderr || '无输出'), 'err');
     return;
   }
-  ta.value = r.stdout;
-  const rMtime = await exec(`stat -c '%y' ${CONFIG_FILE} 2>/dev/null`);
-  document.getElementById('configMtime').textContent = rMtime.stdout ? `修改于 ${rMtime.stdout.split('.')[0]}` : '';
-  toast('已加载配置', 'ok');
+  const out = r.stdout;
+  if (out.includes('---NOTEXIST---')) {
+    ta.value = '';
+    toast('配置文件不存在,点击「保存」将创建新配置', 'err');
+    return;
+  }
+  // 分离 base64 内容和 mtime
+  const mtimeIdx = out.indexOf('---MTIME---');
+  let b64 = '', mtime = '';
+  if (mtimeIdx >= 0) {
+    b64 = out.slice(0, mtimeIdx).trim();
+    mtime = out.slice(mtimeIdx + 12).trim().split('\n')[0].split('.')[0];
+  } else {
+    b64 = out.trim();
+  }
+  try {
+    // base64 → UTF-8 字符串 (处理多字节字符)
+    const text = decodeURIComponent(escape(atob(b64)));
+    ta.value = text;
+    document.getElementById('configMtime').textContent = mtime ? `修改于 ${mtime}` : '';
+    toast('已加载配置 (' + text.length + ' 字节)', 'ok');
+  } catch (e) {
+    ta.value = '';
+    toast('配置解码失败 (base64): ' + e.message, 'err');
+  }
 }
 
 // 仅写入文件,不重启
@@ -1211,12 +1240,24 @@ async function loadCacheInfo() {
 }
 
 async function viewCache() {
-  const r = await exec(`cat ${CACHE_FILE} 2>/dev/null`);
+  // 用 base64 编码读取,避免大缓存 JSON 中的中文/特殊字符在 evaluateJavascript 回调中出错
+  const r = await exec(`[ -f ${CACHE_FILE} ] && base64 ${CACHE_FILE} || echo "__EMPTY__"`);
   if (!r.stdout || !r.stdout.trim()) { toast('缓存为空'); return; }
-  document.querySelector('[data-tab="control"]').click();
-  const out = document.getElementById('shellOutput');
-  out.style.display = 'block';
-  out.textContent = r.stdout;
+  const out = r.stdout.trim();
+  if (out === '__EMPTY__') { toast('缓存为空'); return; }
+  let text;
+  try {
+    text = decodeURIComponent(escape(atob(out)));
+  } catch (e) {
+    text = r.stdout;
+  }
+  // 显示到日志页 (复用 logViewer,无需另设卡片)
+  document.querySelector('[data-tab="log"]').click();
+  const viewer = document.getElementById('logViewer');
+  viewer.innerHTML = '<div class="line-info">===== 自动分配缓存 (cache.json) =====</div>'
+    + text.split('\n').map(l => `<div>${escapeHtml(l)}</div>`).join('');
+  viewer.scrollTop = 0;
+  toast('缓存已显示到日志页 (' + text.length + ' 字节)', 'ok');
 }
 
 async function clearCache() {
@@ -1394,19 +1435,6 @@ async function rescanService() {
 }
 
 // ====================================================================
-//  Shell
-// ====================================================================
-async function runShell() {
-  const cmd = document.getElementById('shellInput').value.trim();
-  if (!cmd) return;
-  const out = document.getElementById('shellOutput');
-  out.style.display = 'block';
-  out.textContent = '$ ' + cmd + '\n--- 执行中 ---';
-  const r = await exec(cmd);
-  out.textContent = '$ ' + cmd + '\n' + (r.stdout || '') + (r.stderr ? '\n[stderr]\n' + r.stderr : '') + `\n[exit: ${r.errno}]`;
-}
-
-// ====================================================================
 //  绑定
 // ====================================================================
 document.getElementById('refreshStatus').onclick = loadStatus;
@@ -1429,12 +1457,6 @@ document.getElementById('stopSvc').onclick = stopService;
 document.getElementById('restartSvc').onclick = restartService;
 document.getElementById('reloadSvc').onclick = reloadService;
 document.getElementById('rescanSvc').onclick = rescanService;
-document.getElementById('runShell').onclick = runShell;
-document.getElementById('clearShell').onclick = () => {
-  document.getElementById('shellInput').value = '';
-  document.getElementById('shellOutput').style.display = 'none';
-  document.getElementById('shellOutput').textContent = '';
-};
 
 // 日志过滤芯片
 document.querySelectorAll('.filter-row .chip').forEach(chip => {
