@@ -433,6 +433,19 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
       </span><span class="pill" id="configStatusPill">未加载</span></div>
       <div id="configSummary"><div class="loading">加载中…</div></div>
     </div>
+
+    <div class="card">
+      <div class="title">
+        <span class="ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          链接诊断
+        </span>
+        <button class="icon-btn" id="runDiag" title="重新诊断">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+      <div id="diagOutput"><div class="loading">点击右上角按钮运行诊断</div></div>
+    </div>
   </div>
 
   <!-- 配置页 -->
@@ -596,6 +609,7 @@ const LOG_FILE = DATA_DIR + '/threads_log.txt';
 const CONFIG_FILE = DATA_DIR + '/threads.json';
 const CACHE_FILE = DATA_DIR + '/threads_cache';
 const STATUS_FILE = DATA_DIR + '/status.json';
+const PID_FILE = DATA_DIR + '/aether.pid';
 
 function exec(cmd, opts = {}) {
   return new Promise((resolve) => {
@@ -686,6 +700,33 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// 多方法检测 aether-optext 进程 PID,返回 {pid, src} 或 {pid:'', src:''}
+async function detectPid() {
+  // 1. 读 pid 文件 + kill -0 校验
+  const rPid = await exec(`cat ${PID_FILE} 2>/dev/null`);
+  const filePid = (rPid.stdout || '').trim();
+  if (/^\d+$/.test(filePid)) {
+    const rAlive = await exec(`kill -0 ${filePid} 2>/dev/null && echo ok || echo no`);
+    if ((rAlive.stdout || '').trim() === 'ok') return { pid: filePid, src: 'pidfile' };
+  }
+  // 2. pidof
+  const rPo = await exec('pidof aether-optext 2>/dev/null');
+  const po = (rPo.stdout || '').trim().split(/\s+/)[0];
+  if (/^\d+$/.test(po)) return { pid: po, src: 'pidof' };
+  // 3. pgrep -f
+  const rPg = await exec('pgrep -f aether-optext 2>/dev/null');
+  const pg = (rPg.stdout || '').trim().split(/\s+/)[0];
+  if (/^\d+$/.test(pg)) return { pid: pg, src: 'pgrep' };
+  // 4. /proc 扫描 (最可靠兜底)
+  const rScan = await exec(`for p in /proc/[0-9]*; do
+    [ -r "\$p/cmdline" ] || continue
+    tr '\\0' ' ' < "\$p/cmdline" 2>/dev/null | grep -q aether-optext && { basename "\$p"; break; }
+  done`);
+  const sc = (rScan.stdout || '').trim().split(/\s+/)[0];
+  if (/^\d+$/.test(sc)) return { pid: sc, src: 'proc' };
+  return { pid: '', src: '' };
+}
+
 function fmtUptime(sec) {
   if (!sec || sec < 0) return '-';
   const d = Math.floor(sec / 86400);
@@ -725,30 +766,121 @@ document.querySelectorAll('.tabs button').forEach(btn => {
 //  状态页 — 优先读 status.json,失败则回退到旧方法
 // ====================================================================
 let statusBusy = false;
+
+// 链接诊断:逐项检查模块↔WebUI 链接所需的条件
+async function runDiagnostic() {
+  const el = document.getElementById('diagOutput');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span> 诊断中…</div>';
+  const lines = [];
+  const check = async (label, cmd) => {
+    const r = await exec(cmd);
+    const ok = r.errno === 0 && (r.stdout || '').trim() !== '';
+    lines.push(`<div class="row" style="padding:6px 0;border-bottom:0.5px solid var(--border);">
+      <span class="name">${label}</span>
+      <span class="cpus" style="${ok ? '' : 'background:rgba(255,69,58,0.12);color:var(--red);'}">${ok ? 'OK' : '失败'}</span>
+    </div>`);
+    return ok;
+  };
+
+  // 1. exec API 可用性
+  const rExec = await exec('echo ok');
+  const execOk = (rExec.stdout || '').trim() === 'ok';
+  lines.push(`<div class="row" style="padding:6px 0;border-bottom:0.5px solid var(--border);">
+    <span class="name">ksu.exec API</span>
+    <span class="cpus" style="${execOk ? '' : 'background:rgba(255,69,58,0.12);color:var(--red);'}">${execOk ? 'OK' : '不可用'}</span>
+  </div>`);
+
+  // 2. 二进制存在
+  await check('二进制 aether-optext', `[ -f ${MOD_DIR}/aether-optext ] && echo ok`);
+  // 3. 数据目录可写
+  await check('数据目录可写', `(echo ok > ${DATA_DIR}/.diag_test 2>/dev/null && cat ${DATA_DIR}/.diag_test 2>/dev/null && rm -f ${DATA_DIR}/.diag_test)`);
+  // 4. 配置文件存在
+  await check('threads.json 存在', `[ -f ${CONFIG_FILE} ] && echo ok`);
+  // 5. status.json 存在 + 时效
+  const rSt = await exec(`[ -f ${STATUS_FILE} ] && cat ${STATUS_FILE} 2>/dev/null`);
+  let stFresh = false;
+  if (rSt.stdout && rSt.stdout.trim()) {
+    try {
+      const st = JSON.parse(rSt.stdout);
+      const age = Date.now() / 1000 - (st.timestamp || 0);
+      stFresh = age < 30;
+      lines.push(`<div class="row" style="padding:6px 0;border-bottom:0.5px solid var(--border);">
+        <span class="name">status.json (PID=${st.pid}, ${Math.round(age)}s 前)</span>
+        <span class="cpus" style="${stFresh ? '' : 'background:rgba(255,159,10,0.12);color:var(--orange);'}">${stFresh ? '新鲜' : '过期'}</span>
+      </div>`);
+    } catch (e) {
+      lines.push(`<div class="row" style="padding:6px 0;border-bottom:0.5px solid var(--border);">
+        <span class="name">status.json 解析</span>
+        <span class="cpus" style="background:rgba(255,69,58,0.12);color:var(--red);">失败</span>
+      </div>`);
+    }
+  } else {
+    lines.push(`<div class="row" style="padding:6px 0;border-bottom:0.5px solid var(--border);">
+      <span class="name">status.json</span>
+      <span class="cpus" style="background:rgba(255,69,58,0.12);color:var(--red);">不存在</span>
+    </div>`);
+  }
+  // 6. 进程检测
+  const { pid, src } = await detectPid();
+  lines.push(`<div class="row" style="padding:6px 0;">
+    <span class="name">进程检测</span>
+    <span class="cpus" style="${pid ? '' : 'background:rgba(255,69,58,0.12);color:var(--red);'}">${pid ? `PID=${pid} (${src})` : '未发现'}</span>
+  </div>`);
+  // 7. 日志最后 1 行
+  const rLog = await exec(`tail -n 1 ${LOG_FILE} 2>/dev/null`);
+  const lastLog = (rLog.stdout || '').trim();
+  if (lastLog) {
+    lines.push(`<div style="padding:8px 0 0;font-size:11px;color:var(--text-dim);">最后日志:</div>
+    <div style="font-family:var(--mono);font-size:11px;padding:6px 8px;background:var(--surface-2);border-radius:8px;margin-top:4px;word-break:break-all;">${escapeHtml(lastLog)}</div>`);
+  }
+
+  el.innerHTML = `<div class="rule-list">${lines.join('')}</div>`;
+}
 async function loadStatus() {
   if (statusBusy) return;
   statusBusy = true;
 
-  // 先尝试读 status.json (由模块每轮循环写入,最可靠)
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+
+  // 多方法检测 PID (pidfile/pidof/pgrep/proc scan)
+  const { pid, src } = await detectPid();
+  const running = !!pid;
+
+  // 读 status.json (模块每轮循环写入)
   const rSt = await exec(`cat ${STATUS_FILE} 2>/dev/null`);
   let st = null;
   if (rSt.stdout && rSt.stdout.trim()) {
     try { st = JSON.parse(rSt.stdout); } catch (e) { st = null; }
   }
 
-  const dot = document.getElementById('statusDot');
-  const txt = document.getElementById('statusText');
+  // 若 status.json 中的 PID 与检测到的不一致,以检测到为准 (旧 status 可能是上次运行的)
+  let stPidMatch = st && st.pid && String(st.pid) === pid;
 
-  if (st && st.pid) {
-    // 验证 PID 是否仍存活
-    const rKill = await exec(`kill -0 ${st.pid} 2>/dev/null && echo ok || echo no`);
-    const alive = (rKill.stdout || '').trim() === 'ok';
-    dot.className = 'status-dot ' + (alive ? 'running' : 'stopped');
-    txt.textContent = alive ? '运行中' : '已停止 (PID 不存在)';
+  dot.className = 'status-dot ' + (running ? 'running' : 'stopped');
+  if (running) {
+    txt.textContent = stPidMatch ? `运行中 (检测: ${src})` : `运行中 (检测: ${src}, status 未同步)`;
+  } else {
+    // 未运行 — 尝试给出原因
+    let reason = '已停止';
+    if (st && st.state === 'config_error') reason = '已退出 (配置错误)';
+    else if (st && st.timestamp) {
+      const age = Date.now() / 1000 - st.timestamp;
+      if (age > 60) reason = `已退出 (status 停更 ${Math.round(age)}s)`;
+      else reason = '已停止';
+    } else {
+      // 检查二进制是否存在
+      const rBin = await exec(`[ -f ${MOD_DIR}/aether-optext ] && echo ok || echo no`);
+      if ((rBin.stdout || '').trim() !== 'ok') reason = '已退出 (二进制缺失)';
+      else reason = '已停止 (点击「启动」)';
+    }
+    txt.textContent = reason;
+  }
 
-    document.getElementById('kvProc').textContent = 'aether-optext';
-    document.getElementById('kvPid').textContent = alive ? st.pid : '-';
-    document.getElementById('kvUptime').textContent = alive ? fmtUptime(st.uptime_sec) : '-';
+  document.getElementById('kvProc').textContent = running ? 'aether-optext' : '-';
+  document.getElementById('kvPid').textContent = pid || '-';
+  if (running && stPidMatch) {
+    document.getElementById('kvUptime').textContent = fmtUptime(st.uptime_sec);
     document.getElementById('kvTopo').textContent = st.topology || '-';
     document.getElementById('kvCpu').textContent = (st.big || st.little) ? `大=${st.big} 小=${st.little}` : '-';
     document.getElementById('kvRules').textContent = st.rules ?? '-';
@@ -760,24 +892,23 @@ async function loadStatus() {
         ? `${st.last_bind_procs} 进程 / ${st.last_bind_threads} 线程`
         : '-';
     document.getElementById('kvUpdated').textContent = fmtTime(st.timestamp);
+  } else if (running) {
+    // 进程在跑但 status.json 没同步 — 显示基础信息
+    document.getElementById('kvUptime').textContent = '(status 未同步)';
+    document.getElementById('kvTopo').textContent = '-';
+    document.getElementById('kvCpu').textContent = '-';
+    document.getElementById('kvRules').textContent = '-';
+    document.getElementById('kvBpf').textContent = '-';
+    document.getElementById('kvBind').textContent = '-';
+    document.getElementById('kvUpdated').textContent = '-';
   } else {
-    // 回退:用 pidof + /proc 推断
-    const rPid = await exec('pidof aether-optext');
-    const pid = (rPid.stdout || '').trim().split(/\s+/)[0];
-    const running = !!pid && /^\d+$/.test(pid);
-
-    dot.className = 'status-dot ' + (running ? 'running' : 'stopped');
-    txt.textContent = running ? '运行中' : '已停止';
-
-    document.getElementById('kvProc').textContent = running ? 'aether-optext' : '-';
-    document.getElementById('kvPid').textContent = pid || '-';
     document.getElementById('kvUptime').textContent = '-';
     document.getElementById('kvTopo').textContent = '-';
     document.getElementById('kvCpu').textContent = '-';
     document.getElementById('kvRules').textContent = '-';
     document.getElementById('kvBpf').textContent = '-';
     document.getElementById('kvBind').textContent = '-';
-    document.getElementById('kvUpdated').textContent = '(status.json 不可用)';
+    document.getElementById('kvUpdated').textContent = st && st.timestamp ? fmtTime(st.timestamp) : '-';
   }
 
   // 版本号
@@ -1072,6 +1203,7 @@ async function runShell() {
 // ====================================================================
 document.getElementById('refreshStatus').onclick = loadStatus;
 document.getElementById('rescanBtn').onclick = rescanService;
+document.getElementById('runDiag').onclick = runDiagnostic;
 document.getElementById('loadConfig').onclick = loadConfig;
 document.getElementById('saveConfig').onclick = saveConfig;
 document.getElementById('saveAndApply').onclick = saveAndApply;

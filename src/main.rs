@@ -33,18 +33,38 @@ extern "C" fn on_signal(sig: i32) {
 /// 写入 status.json 供 WebUI 读取
 fn write_status(pid: u32, start_sec: u64, topo: &str, big: &str, little: &str,
                 rules: usize, ebpf_ok: bool, interval: u64,
-                last_procs: usize, last_threads: usize) {
+                last_procs: usize, last_threads: usize, state: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let uptime = now.saturating_sub(start_sec);
     // 转义反斜杠与引号(核心范围不含特殊字符,此处仅作兜底)
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let json = format!(
-        r#"{{"pid":{},"uptime_sec":{},"timestamp":{},"topology":"{}","big":"{}","little":"{}","rules":{},"ebpf":{},"interval":{},"last_bind_procs":{},"last_bind_threads":{}}}"#,
+        r#"{{"pid":{},"uptime_sec":{},"timestamp":{},"topology":"{}","big":"{}","little":"{}","rules":{},"ebpf":{},"interval":{},"last_bind_procs":{},"last_bind_threads":{},"state":"{}"}}"#,
         pid, uptime, now, esc(topo), esc(big), esc(little),
-        rules, ebpf_ok, interval, last_procs, last_threads
+        rules, ebpf_ok, interval, last_procs, last_threads, esc(state)
     );
     let path = format!("{}/status.json", log::DATA_DIR);
     let _ = fs::write(&path, json.as_bytes());
+}
+
+/// 尝试从模块目录复制默认配置 (按拓扑匹配,失败则用 4+3+1 兜底)
+fn deploy_default_config(config_path: &str) -> bool {
+    let mod_dir = "/data/adb/modules/aether-optext";
+    // 检测拓扑
+    let topo = cpu::detect().2;
+    let candidates = [
+        format!("{}/config/{}.json", mod_dir, topo),
+        format!("{}/config/4+3+1.json", mod_dir),
+    ];
+    for c in &candidates {
+        if Path::new(c).exists() {
+            if fs::copy(c, config_path).is_ok() {
+                info!("已部署默认配置: {}", c);
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn main() {
@@ -58,7 +78,18 @@ fn main() {
             .map(|mut f| write!(f, "[PANIC] {} at {}\n", msg, loc));
     }));
 
-    let _ = fs::create_dir_all(log::DATA_DIR);
+    // 重试创建数据目录 (开机时 /storage/emulated/0 可能未就绪)
+    for _ in 0..30 {
+        if fs::create_dir_all(log::DATA_DIR).is_ok() {
+            // 测试可写
+            let test = format!("{}/.w", log::DATA_DIR);
+            if fs::write(&test, b"x").is_ok() {
+                let _ = fs::remove_file(&test);
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
     fs::write(log::PATH, "").ok();
 
     let args: Vec<String> = env::args().collect();
@@ -75,6 +106,11 @@ fn main() {
     }
     if interval < 1 { interval = 1; }
 
+    // 立即写 PID 文件,供 WebUI 检测 (在任何可能失败的初始化之前)
+    let self_pid = std::process::id();
+    let pid_path = format!("{}/aether.pid", log::DATA_DIR);
+    let _ = fs::write(&pid_path, format!("{}", self_pid).as_bytes());
+
     // 注册信号处理
     unsafe {
         libc::signal(libc::SIGHUP, on_signal as usize);
@@ -85,9 +121,23 @@ fn main() {
 
     info!("CPU: {} cpuset={}", cpu::present(), Path::new("/dev/cpuset").exists());
 
+    // 配置缺失则部署默认配置
+    if !Path::new(&config_path).exists() {
+        info!("配置不存在,尝试部署默认配置");
+        let _ = deploy_default_config(&config_path);
+    }
+
     let mut cfg = match AppConfig::load(&config_path) {
         Some(c) => c,
-        None => { error!("配置加载失败"); return; }
+        None => {
+            error!("配置加载失败: {}", config_path);
+            // 写一个 error 状态文件让 WebUI 显示原因
+            write_status(self_pid, SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                         "?", "?", "?", 0, false, interval, 0, 0, "config_error");
+            // 删除 pid 文件,表示进程将退出
+            let _ = fs::remove_file(&pid_path);
+            return;
+        }
     };
     info!("已加载 {} 条规则", cfg.rules.len());
 
@@ -139,7 +189,6 @@ fn main() {
         info!("自动分配完成: {} 个", unknown.len());
     }
 
-    let self_pid = std::process::id();
     let start_sec = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
 
     let mut lc = 0i32;
@@ -151,7 +200,7 @@ fn main() {
     let mut last_threads = 0usize;
     info!("启动");
 
-    write_status(self_pid, start_sec, &topo, &big, &little, cfg.rules.len(), bpf.ok, interval, 0, 0);
+    write_status(self_pid, start_sec, &topo, &big, &little, cfg.rules.len(), bpf.ok, interval, 0, 0, "running");
 
     loop {
         // 信号:重载配置
@@ -238,7 +287,7 @@ fn main() {
 
         // 写状态文件
         write_status(self_pid, start_sec, &topo, &big, &little,
-                     cfg.rules.len(), bpf.ok, interval, last_procs, last_threads);
+                     cfg.rules.len(), bpf.ok, interval, last_procs, last_threads, "running");
 
         std::thread::sleep(Duration::from_secs(interval));
     }
