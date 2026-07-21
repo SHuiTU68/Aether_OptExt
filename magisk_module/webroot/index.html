@@ -598,16 +598,17 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
 
 <script>
 // ====================================================================
-//  KernelSU / APatch / Magisk Delta exec API — 兼容多种调用风格
-//    1. 新版 kernelsu@3.x:返回 Promise<{errno, stdout, stderr}>
-//    2. 中版同步:返回 {errno, stdout, stderr}
-//    3. 旧版 callback:ksu.exec(cmd, optsJson, callback)
+//  KernelSU / APatch exec API — 严格按照官方 kernelsu npm 包实现
+//  参考: https://github.com/tiann/KernelSU/blob/master/js/index.js
 //
-//  关键: 不同管理器注入的全局对象名不同,必须全部检测:
-//    - KernelSU / APatch (复制自 KernelSU)  → window.KernelSU (首字母大写!)
-//    - KernelSU 别名                          → window.ksu (小写)
-//    - MMRL / 第三方加载器                    → window.ksux / window.mmrl
-//    - APatch 别名                            → window.apatch / window.apd
+//  关键: 官方调用方式是 callback-by-name,不是 Promise,不是直接 callback:
+//    1. 在 window 上注册一个唯一名字的回调函数
+//    2. 调用 ksu.exec(cmd, optsJson, callbackNameString)
+//    3. native side 通过 window[callbackName](errno, stdout, stderr) 回调
+//    4. 包装成 Promise 返回
+//
+//  全局对象名: KernelSU 和 APatch 都注入 window.ksu (小写)。
+//  另外 KernelSU 也可能注入 window.KernelSU,APatch 可能注入 window.apatch。
 // ====================================================================
 const DATA_DIR = '/storage/emulated/0/Android/Aether';
 const MOD_DIR = '/data/adb/modules/aether-optext';
@@ -617,23 +618,32 @@ const CACHE_FILE = DATA_DIR + '/threads_cache';
 const STATUS_FILE = DATA_DIR + '/status.json';
 const PID_FILE = DATA_DIR + '/aether.pid';
 
+// 回调计数器 (用于生成唯一回调名)
+let _execCallbackCounter = 0;
+
 // 探测管理器注入的全局对象名 (供诊断显示)
 function detectBridgeName() {
   const names = [];
-  try { if (typeof KernelSU !== 'undefined' && KernelSU) names.push('KernelSU'); } catch (e) {}
-  try { if (typeof ksu !== 'undefined' && ksu) names.push('ksu'); } catch (e) {}
-  try { if (typeof kernelsu !== 'undefined' && kernelsu) names.push('kernelsu'); } catch (e) {}
-  try { if (typeof ksux !== 'undefined' && ksux) names.push('ksux'); } catch (e) {}
-  try { if (typeof apatch !== 'undefined' && apatch) names.push('apatch'); } catch (e) {}
-  try { if (typeof apd !== 'undefined' && apd) names.push('apd'); } catch (e) {}
-  try { if (typeof mmrl !== 'undefined' && mmrl) names.push('mmrl'); } catch (e) {}
-  return names.length ? names.join(', ') : '(无)';
+  // 用 try/catch 防止 ReferenceError
+  try { if (typeof ksu !== 'undefined' && ksu && typeof ksu.exec === 'function') names.push('ksu'); } catch (e) {}
+  try { if (typeof KernelSU !== 'undefined' && KernelSU && typeof KernelSU.exec === 'function') names.push('KernelSU'); } catch (e) {}
+  try { if (typeof kernelsu !== 'undefined' && kernelsu && typeof kernelsu.exec === 'function') names.push('kernelsu'); } catch (e) {}
+  try { if (typeof ksux !== 'undefined' && ksux && typeof ksux.exec === 'function') names.push('ksux'); } catch (e) {}
+  try { if (typeof apatch !== 'undefined' && apatch && typeof apatch.exec === 'function') names.push('apatch'); } catch (e) {}
+  try { if (typeof apd !== 'undefined' && apd && typeof apd.exec === 'function') names.push('apd'); } catch (e) {}
+  try { if (typeof mmrl !== 'undefined' && mmrl && typeof mmrl.exec === 'function') names.push('mmrl'); } catch (e) {}
+  // 检测对象存在但 exec 不是函数的情况
+  const existsNoExec = [];
+  try { if (typeof ksu !== 'undefined' && ksu && typeof ksu.exec !== 'function') existsNoExec.push('ksu(without exec)'); } catch (e) {}
+  try { if (typeof KernelSU !== 'undefined' && KernelSU && typeof KernelSU.exec !== 'function') existsNoExec.push('KernelSU(without exec)'); } catch (e) {}
+  return names.length ? names.join(', ') : (existsNoExec.length ? existsNoExec.join(', ') : '(无)');
 }
 
+// 获取 bridge 对象 (按优先级)
 function getBridge() {
-  // 按优先级检测所有可能的全局对象名
-  // 关键: KernelSU 首字母大写是 APatch/KernelSU 官方注入的对象名
-  const candidates = ['KernelSU', 'ksu', 'kernelsu', 'ksux', 'apatch', 'apd'];
+  // 官方注入名: KernelSU 和 APatch 都用 ksu (小写)
+  // 但旧版 KernelSU 也可能用 KernelSU (大写)
+  const candidates = ['ksu', 'KernelSU', 'kernelsu', 'ksux', 'apatch', 'apd'];
   for (const name of candidates) {
     try {
       const obj = window[name];
@@ -643,77 +653,75 @@ function getBridge() {
   return { obj: null, name: null };
 }
 
-function exec(cmd, opts = {}) {
-  return new Promise((resolve) => {
+// 严格按照官方 kernelsu npm 包的 exec 实现
+// 参考: https://github.com/tiann/KernelSU/blob/master/js/index.js
+function exec(cmd, opts) {
+  if (typeof opts === 'undefined') opts = {};
+  return new Promise((resolve, reject) => {
     const { obj: ksuObj, name } = getBridge();
     if (!ksuObj) {
       const detected = detectBridgeName();
-      resolve({ errno: -1, stdout: '', stderr: `exec API 不可用 (检测到的全局对象: ${detected})。请在 KernelSU/APatch/Magisk Delta 管理器内打开 WebUI,而非浏览器。` });
+      resolve({ errno: -1, stdout: '', stderr: `exec API 不可用 (检测到的全局对象: ${detected})。请确认在 KernelSU/APatch 管理器内打开 WebUI。` });
       return;
     }
 
+    // 生成唯一回调函数名 (与官方实现一致)
+    const callbackFuncName = `exec_callback_${Date.now()}_${_execCallbackCounter++}`;
+
+    // 注册回调函数 — native side 会调用 window[callbackFuncName](errno, stdout, stderr)
     let settled = false;
-    const done = (r) => {
+    window[callbackFuncName] = function(errno, stdout, stderr) {
       if (settled) return;
       settled = true;
       resolve({
-        errno: r.errno ?? r.exitCode ?? 0,
-        stdout: r.stdout ?? '',
-        stderr: r.stderr ?? '',
+        errno: errno ?? 0,
+        stdout: stdout ?? '',
+        stderr: stderr ?? '',
       });
+      // 清理回调函数
+      try { delete window[callbackFuncName]; } catch (e) { window[callbackFuncName] = undefined; }
     };
 
-    try {
-      // 调用 1:Promise 风格 (kernelsu@3.x / APatch)
-      // exec(cmd) 或 exec(cmd, opts)
-      const ret = ksuObj.exec(cmd, opts);
-
-      if (ret && typeof ret.then === 'function') {
-        // Promise
-        ret.then(done).catch(e => done({ errno: -1, stdout: '', stderr: String(e) }));
-        return;
-      }
-      if (ret && typeof ret === 'object') {
-        // 同步返回对象
-        done(ret);
-        return;
-      }
-      if (typeof ret === 'string') {
-        // 有些实现返回 "errno\nstdout\nstderr" 格式
-        const parts = ret.split('\n');
-        done({ errno: parseInt(parts[0]) || 0, stdout: parts.slice(1).join('\n'), stderr: '' });
-        return;
-      }
-      // 调用 2:旧版 callback 风格 (KernelSU 老版本)
-      // 此时 ret === undefined,通过下方 setTimeout 触发 callback 风格
-    } catch (e) {
-      // exec(cmd, opts) 抛错时,试试 callback 风格
-      try {
-        ksuObj.exec(cmd, JSON.stringify(opts), (stdout, stderr, exitCode) => {
-          done({ errno: exitCode ?? 0, stdout: stdout || '', stderr: stderr || '' });
-        });
-        setTimeout(() => done({ errno: -1, stdout: '', stderr: `超时 (10s) [${name}]` }), 10000);
-        return;
-      } catch (e2) {
-        done({ errno: -1, stdout: '', stderr: `exec 调用失败 [${name}]: ${e2}` });
-        return;
-      }
-    }
-
-    // 如果上面没 settle,试试 callback 风格 (KernelSU 老版本)
-    setTimeout(() => {
+    // 超时保护 (官方没有,但实战需要 — 避免 native 不回调时永远 pending)
+    const timer = setTimeout(() => {
       if (settled) return;
-      try {
-        ksuObj.exec(cmd, JSON.stringify(opts), (stdout, stderr, exitCode) => {
-          done({ errno: exitCode ?? 0, stdout: stdout || '', stderr: stderr || '' });
-        });
-      } catch (e) {
-        done({ errno: -1, stdout: '', stderr: `callback 风格失败 [${name}]: ${e}` });
+      settled = true;
+      resolve({ errno: -1, stdout: '', stderr: `exec 超时 (15s) [bridge: ${name}] — 命令: ${cmd.slice(0, 80)}` });
+      try { delete window[callbackFuncName]; } catch (e) { window[callbackFuncName] = undefined; }
+    }, 15000);
+
+    try {
+      // 官方调用方式: ksu.exec(command, JSON.stringify(options), callbackFuncName)
+      // 第 3 个参数是回调函数名字符串,不是函数对象!
+      ksuObj.exec(cmd, JSON.stringify(opts), callbackFuncName);
+    } catch (e) {
+      clearTimeout(timer);
+      if (!settled) {
+        settled = true;
+        // 尝试 fallback: 也许某些实现支持 2 参数 Promise 风格
+        try {
+          const ret = ksuObj.exec(cmd, opts);
+          if (ret && typeof ret.then === 'function') {
+            ret.then(r => resolve({
+              errno: r.errno ?? r.exitCode ?? 0,
+              stdout: r.stdout ?? '',
+              stderr: r.stderr ?? '',
+            })).catch(err => resolve({ errno: -1, stdout: '', stderr: String(err) }));
+            return;
+          }
+          if (ret && typeof ret === 'object') {
+            resolve({
+              errno: ret.errno ?? ret.exitCode ?? 0,
+              stdout: ret.stdout ?? '',
+              stderr: ret.stderr ?? '',
+            });
+            return;
+          }
+        } catch (e2) {}
+        resolve({ errno: -1, stdout: '', stderr: `exec 调用失败 [${name}]: ${e}` });
       }
-      setTimeout(() => {
-        if (!settled) done({ errno: -1, stdout: '', stderr: `超时 (10s) [${name}] — API 可能不支持` });
-      }, 10000);
-    }, 0);
+      try { delete window[callbackFuncName]; } catch (err) { window[callbackFuncName] = undefined; }
+    }
   });
 }
 
