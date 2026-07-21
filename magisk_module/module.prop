@@ -4,3 +4,6 @@ version=0718-ReleasePreview
 versionCode=260718
 author=NetizenNemo
 description=Aether OptExt - Android CPU affinity optimizer
+# Magisk action button (启动 WebUI 主机应用,用于无原生 WebUI 的环境)
+update_ns=.
+support=https://github.com/SHuiTU68/Aether_OptExt

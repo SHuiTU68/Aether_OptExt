@@ -598,17 +598,22 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
 
 <script>
 // ====================================================================
-//  KernelSU / APatch exec API — 严格按照官方 kernelsu npm 包实现
-//  参考: https://github.com/tiann/KernelSU/blob/master/js/index.js
+//  统一的 exec API — 支持 KernelSU / APatch / KernelSU Next / MMRL / WebUI X
 //
-//  关键: 官方调用方式是 callback-by-name,不是 Promise,不是直接 callback:
-//    1. 在 window 上注册一个唯一名字的回调函数
-//    2. 调用 ksu.exec(cmd, optsJson, callbackNameString)
-//    3. native side 通过 window[callbackName](errno, stdout, stderr) 回调
-//    4. 包装成 Promise 返回
+//  参考实现:
+//  - KernelSU 官方: https://github.com/tiann/KernelSU/blob/master/js/index.js
+//  - KernelSU Next: https://github.com/KernelSU-Next/KernelSU-Next (WebViewInterface.kt)
+//  - APatch: 复用 KernelSU 协议 (window.ksu.exec)
+//  - MMRL / WebUI X: 通过 kernelsu-alt 兼容层 (window.ksu.exec)
+//  - Magisk: 无原生 WebUI,需 action.sh 启动外部 WebUI 主机
 //
-//  全局对象名: KernelSU 和 APatch 都注入 window.ksu (小写)。
-//  另外 KernelSU 也可能注入 window.KernelSU,APatch 可能注入 window.apatch。
+//  核心协议 (callback-by-name,native 通过 evaluateJavascript 回调):
+//    1. window[callbackName] = (errno, stdout, stderr) => resolve(...)
+//    2. ksu.exec(command, JSON.stringify(options), callbackNameString)
+//    3. native: webView.evaluateJavascript("window['xxx'](0, '...', '...')", null)
+//
+//  全局对象检测优先级 (按出现频率):
+//    ksu (官方/APatch/MMRL) > KernelSU (旧版别名) > kernelsu > ksux > apatch > apd
 // ====================================================================
 const DATA_DIR = '/storage/emulated/0/Android/Aether';
 const MOD_DIR = '/data/adb/modules/aether-optext';
@@ -621,29 +626,29 @@ const PID_FILE = DATA_DIR + '/aether.pid';
 // 回调计数器 (用于生成唯一回调名)
 let _execCallbackCounter = 0;
 
-// 探测管理器注入的全局对象名 (供诊断显示)
+// 探测所有可用的 bridge 对象 (供诊断显示)
 function detectBridgeName() {
   const names = [];
-  // 用 try/catch 防止 ReferenceError
-  try { if (typeof ksu !== 'undefined' && ksu && typeof ksu.exec === 'function') names.push('ksu'); } catch (e) {}
-  try { if (typeof KernelSU !== 'undefined' && KernelSU && typeof KernelSU.exec === 'function') names.push('KernelSU'); } catch (e) {}
-  try { if (typeof kernelsu !== 'undefined' && kernelsu && typeof kernelsu.exec === 'function') names.push('kernelsu'); } catch (e) {}
-  try { if (typeof ksux !== 'undefined' && ksux && typeof ksux.exec === 'function') names.push('ksux'); } catch (e) {}
-  try { if (typeof apatch !== 'undefined' && apatch && typeof apatch.exec === 'function') names.push('apatch'); } catch (e) {}
-  try { if (typeof apd !== 'undefined' && apd && typeof apd.exec === 'function') names.push('apd'); } catch (e) {}
-  try { if (typeof mmrl !== 'undefined' && mmrl && typeof mmrl.exec === 'function') names.push('mmrl'); } catch (e) {}
-  // 检测对象存在但 exec 不是函数的情况
-  const existsNoExec = [];
-  try { if (typeof ksu !== 'undefined' && ksu && typeof ksu.exec !== 'function') existsNoExec.push('ksu(without exec)'); } catch (e) {}
-  try { if (typeof KernelSU !== 'undefined' && KernelSU && typeof KernelSU.exec !== 'function') existsNoExec.push('KernelSU(without exec)'); } catch (e) {}
-  return names.length ? names.join(', ') : (existsNoExec.length ? existsNoExec.join(', ') : '(无)');
+  const noExec = [];
+  const candidates = [
+    'ksu', 'KernelSU', 'kernelsu', 'ksux',
+    'apatch', 'apd', 'mmrl', 'webui'
+  ];
+  for (const name of candidates) {
+    try {
+      const obj = window[name];
+      if (obj) {
+        if (typeof obj.exec === 'function') names.push(name);
+        else noExec.push(`${name}(no exec)`);
+      }
+    } catch (e) {}
+  }
+  return names.length ? names.join(', ') : (noExec.length ? noExec.join(', ') : '(无)');
 }
 
-// 获取 bridge 对象 (按优先级)
+// 获取 bridge 对象 (按优先级,所有候选都检测)
 function getBridge() {
-  // 官方注入名: KernelSU 和 APatch 都用 ksu (小写)
-  // 但旧版 KernelSU 也可能用 KernelSU (大写)
-  const candidates = ['ksu', 'KernelSU', 'kernelsu', 'ksux', 'apatch', 'apd'];
+  const candidates = ['ksu', 'KernelSU', 'kernelsu', 'ksux', 'apatch', 'apd', 'mmrl'];
   for (const name of candidates) {
     try {
       const obj = window[name];
@@ -653,41 +658,55 @@ function getBridge() {
   return { obj: null, name: null };
 }
 
-// 严格按照官方 kernelsu npm 包的 exec 实现
-// 参考: https://github.com/tiann/KernelSU/blob/master/js/index.js
+// 统一 exec: 严格遵循 KernelSU 官方 callback-by-name 协议
+// 兼容 KernelSU / APatch / KernelSU Next / MMRL / WebUI X
 function exec(cmd, opts) {
   if (typeof opts === 'undefined') opts = {};
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const { obj: ksuObj, name } = getBridge();
     if (!ksuObj) {
       const detected = detectBridgeName();
-      resolve({ errno: -1, stdout: '', stderr: `exec API 不可用 (检测到的全局对象: ${detected})。请确认在 KernelSU/APatch 管理器内打开 WebUI。` });
+      resolve({
+        errno: -1,
+        stdout: '',
+        stderr: `exec API 不可用 (检测到的全局对象: ${detected})。请确认在 KernelSU/APatch/MMRL 管理器内打开 WebUI,而非浏览器。Magisk 用户需先安装 KSU WebUI Standalone 或 WebUI X。`
+      });
       return;
     }
 
-    // 生成唯一回调函数名 (与官方实现一致)
+    // 生成唯一回调函数名 (与官方 kernelsu npm 包实现一致)
     const callbackFuncName = `exec_callback_${Date.now()}_${_execCallbackCounter++}`;
-
-    // 注册回调函数 — native side 会调用 window[callbackFuncName](errno, stdout, stderr)
     let settled = false;
+    let timer = null;
+
+    // 清理辅助:移除 window 上的临时回调
+    const cleanup = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      try { delete window[callbackFuncName]; } catch (e) { try { window[callbackFuncName] = undefined; } catch (e2) {} }
+    };
+
+    // 注册回调函数 — native side 通过 window[callbackFuncName](errno, stdout, stderr) 回调
     window[callbackFuncName] = function(errno, stdout, stderr) {
       if (settled) return;
       settled = true;
       resolve({
-        errno: errno ?? 0,
-        stdout: stdout ?? '',
-        stderr: stderr ?? '',
+        errno: (typeof errno === 'number') ? errno : 0,
+        stdout: stdout || '',
+        stderr: stderr || '',
       });
-      // 清理回调函数
-      try { delete window[callbackFuncName]; } catch (e) { window[callbackFuncName] = undefined; }
+      cleanup();
     };
 
-    // 超时保护 (官方没有,但实战需要 — 避免 native 不回调时永远 pending)
-    const timer = setTimeout(() => {
+    // 超时保护 (官方无,实战需要 — 避免 native 不回调时永远 pending)
+    timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      resolve({ errno: -1, stdout: '', stderr: `exec 超时 (15s) [bridge: ${name}] — 命令: ${cmd.slice(0, 80)}` });
-      try { delete window[callbackFuncName]; } catch (e) { window[callbackFuncName] = undefined; }
+      resolve({
+        errno: -1,
+        stdout: '',
+        stderr: `exec 超时 (15s) [bridge: ${name}] — 命令: ${cmd.slice(0, 80)}`,
+      });
+      cleanup();
     }, 15000);
 
     try {
@@ -695,32 +714,58 @@ function exec(cmd, opts) {
       // 第 3 个参数是回调函数名字符串,不是函数对象!
       ksuObj.exec(cmd, JSON.stringify(opts), callbackFuncName);
     } catch (e) {
-      clearTimeout(timer);
-      if (!settled) {
-        settled = true;
-        // 尝试 fallback: 也许某些实现支持 2 参数 Promise 风格
-        try {
-          const ret = ksuObj.exec(cmd, opts);
-          if (ret && typeof ret.then === 'function') {
-            ret.then(r => resolve({
+      // fallback 1: 某些实现支持 2 参数 Promise 风格 (MMRL kernelsu-alt)
+      try {
+        const ret = ksuObj.exec(cmd, opts);
+        if (ret && typeof ret.then === 'function') {
+          ret.then(r => {
+            if (settled) return;
+            settled = true;
+            resolve({
               errno: r.errno ?? r.exitCode ?? 0,
               stdout: r.stdout ?? '',
               stderr: r.stderr ?? '',
-            })).catch(err => resolve({ errno: -1, stdout: '', stderr: String(err) }));
-            return;
-          }
-          if (ret && typeof ret === 'object') {
-            resolve({
-              errno: ret.errno ?? ret.exitCode ?? 0,
-              stdout: ret.stdout ?? '',
-              stderr: ret.stderr ?? '',
             });
-            return;
-          }
-        } catch (e2) {}
+            cleanup();
+          }).catch(err => {
+            if (settled) return;
+            settled = true;
+            resolve({ errno: -1, stdout: '', stderr: String(err) });
+            cleanup();
+          });
+          return;
+        }
+        if (ret && typeof ret === 'object' && (ret.errno !== undefined || ret.stdout !== undefined)) {
+          settled = true;
+          resolve({
+            errno: ret.errno ?? ret.exitCode ?? 0,
+            stdout: ret.stdout ?? '',
+            stderr: ret.stderr ?? '',
+          });
+          cleanup();
+          return;
+        }
+      } catch (e2) {}
+
+      // fallback 2: 旧版 callback 函数对象风格
+      try {
+        ksuObj.exec(cmd, JSON.stringify(opts), function(stdout, stderr, exitCode) {
+          if (settled) return;
+          settled = true;
+          resolve({
+            errno: exitCode ?? 0,
+            stdout: stdout || '',
+            stderr: stderr || '',
+          });
+          cleanup();
+        });
+        return;
+      } catch (e3) {
+        if (settled) return;
+        settled = true;
         resolve({ errno: -1, stdout: '', stderr: `exec 调用失败 [${name}]: ${e}` });
+        cleanup();
       }
-      try { delete window[callbackFuncName]; } catch (err) { window[callbackFuncName] = undefined; }
     }
   });
 }
@@ -1335,10 +1380,13 @@ try {
       <div>WebUI 无法执行 root 命令,所有功能将失效。</div>
       <div style="margin-top:6px;font-size:12px;"><strong>检测到的全局对象:</strong> <code style="background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;">${escapeHtml(detected)}</code></div>
       <div style="margin-top:4px;font-size:12px;opacity:0.85;">错误: ${(r.stderr || '未知').slice(0, 200)}</div>
-      <div style="margin-top:8px;font-size:12px;">请确认:</div>
-      <div style="margin-top:2px;font-size:12px;padding-left:12px;">① 在 KernelSU / APatch / Magisk Delta 管理器内打开 WebUI (而非浏览器)</div>
-      <div style="margin-top:2px;font-size:12px;padding-left:12px;">② 管理器版本支持 WebUI (KernelSU ≥ 0.7.0,APatch 较新版本)</div>
-      <div style="margin-top:2px;font-size:12px;padding-left:12px;">③ 若检测到 KernelSU/ksu 但仍失败,可能是 WebView JS bridge 延迟注入,稍等几秒后刷新页面</div>`;
+      <div style="margin-top:10px;font-size:12px;font-weight:600;">按你的管理器选择解决方案:</div>
+      <div style="margin-top:4px;font-size:12px;padding-left:12px;"><strong>KernelSU:</strong> 在管理器主页 → 模块 → Aether OptExt → 点击「WebUI」按钮 (非浏览器打开)</div>
+      <div style="margin-top:2px;font-size:12px;padding-left:12px;"><strong>APatch:</strong> 同上,APatch ≥ 10568 才支持 WebUI</div>
+      <div style="margin-top:2px;font-size:12px;padding-left:12px;"><strong>KernelSU Next:</strong> 同 KernelSU,管理器内打开</div>
+      <div style="margin-top:2px;font-size:12px;padding-left:12px;"><strong>MMRL / WebUI X:</strong> 在应用内打开模块列表 → Aether OptExt → WebUI</div>
+      <div style="margin-top:2px;font-size:12px;padding-left:12px;"><strong>Magisk (原版):</strong> 无原生 WebUI,需先安装 <em>KSU WebUI Standalone</em> 或 <em>WebUI X</em>,再点击模块的「操作」按钮</div>
+      <div style="margin-top:8px;font-size:12px;opacity:0.85;">若检测到 ksu 但仍失败,可能是 WebView JS bridge 延迟注入,稍等几秒后刷新页面重试。</div>`;
     app.insertBefore(banner, app.firstChild);
     return; // 不再加载其他内容,避免一堆错误 toast
   }
