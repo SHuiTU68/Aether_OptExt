@@ -47,6 +47,18 @@ fn write_status(pid: u32, start_sec: u64, topo: &str, big: &str, little: &str,
     let _ = fs::write(&path, json.as_bytes());
 }
 
+/// 写带 error 字段的错误状态文件,然后删除 pid 文件 (用于退出路径)
+fn write_error_state(pid: u32, state: &str, err: &str) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let json = format!(
+        r#"{{"pid":{},"uptime_sec":0,"timestamp":{},"topology":"?","big":"?","little":"?","rules":0,"ebpf":false,"interval":0,"last_bind_procs":0,"last_bind_threads":0,"state":"{}","error":"{}"}}"#,
+        pid, now, esc(state), esc(err)
+    );
+    let _ = fs::write(format!("{}/status.json", log::DATA_DIR), json.as_bytes());
+    let _ = fs::remove_file(format!("{}/aether.pid", log::DATA_DIR));
+}
+
 /// 尝试从模块目录复制默认配置 (按拓扑匹配,失败则用 4+3+1 兜底)
 fn deploy_default_config(config_path: &str) -> bool {
     let mod_dir = "/data/adb/modules/aether-optext";
@@ -76,15 +88,27 @@ fn main() {
         let loc = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
         let _ = fs::OpenOptions::new().create(true).append(true).open(log::PATH)
             .map(|mut f| write!(f, "[PANIC] {} at {}\n", msg, loc));
+        // 写 panic 状态文件
+        let pid = std::process::id();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let json = format!(
+            r#"{{"pid":{},"uptime_sec":0,"timestamp":{},"topology":"?","big":"?","little":"?","rules":0,"ebpf":false,"interval":0,"last_bind_procs":0,"last_bind_threads":0,"state":"panic","error":"{}"}}"#,
+            pid, now, msg.replace('"', "\\\"").replace('\\', "\\\\")
+        );
+        let _ = fs::write(format!("{}/status.json", log::DATA_DIR), json.as_bytes());
+        // 删除 pid 文件
+        let _ = fs::remove_file(format!("{}/aether.pid", log::DATA_DIR));
     }));
 
     // 重试创建数据目录 (开机时 /storage/emulated/0 可能未就绪)
+    let mut dir_ok = false;
     for _ in 0..30 {
         if fs::create_dir_all(log::DATA_DIR).is_ok() {
             // 测试可写
             let test = format!("{}/.w", log::DATA_DIR);
             if fs::write(&test, b"x").is_ok() {
                 let _ = fs::remove_file(&test);
+                dir_ok = true;
                 break;
             }
         }
@@ -106,10 +130,17 @@ fn main() {
     }
     if interval < 1 { interval = 1; }
 
-    // 立即写 PID 文件,供 WebUI 检测 (在任何可能失败的初始化之前)
+    // 立即写 PID 文件 + starting 状态,供 WebUI 检测 (在任何可能失败的初始化之前)
     let self_pid = std::process::id();
     let pid_path = format!("{}/aether.pid", log::DATA_DIR);
     let _ = fs::write(&pid_path, format!("{}", self_pid).as_bytes());
+    write_status(self_pid, 0, "?", "?", "?", 0, false, interval, 0, 0, "starting");
+
+    if !dir_ok {
+        error!("数据目录不可写: {}", log::DATA_DIR);
+        write_error_state(self_pid, "dir_error", &format!("数据目录不可写: {}", log::DATA_DIR));
+        return;
+    }
 
     // 注册信号处理
     unsafe {
@@ -131,11 +162,7 @@ fn main() {
         Some(c) => c,
         None => {
             error!("配置加载失败: {}", config_path);
-            // 写一个 error 状态文件让 WebUI 显示原因
-            write_status(self_pid, SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
-                         "?", "?", "?", 0, false, interval, 0, 0, "config_error");
-            // 删除 pid 文件,表示进程将退出
-            let _ = fs::remove_file(&pid_path);
+            write_error_state(self_pid, "config_error", &format!("配置加载失败: {}", config_path));
             return;
         }
     };
