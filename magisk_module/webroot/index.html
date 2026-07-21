@@ -598,10 +598,16 @@ code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); 
 
 <script>
 // ====================================================================
-//  KernelSU / APatch / Magisk Delta exec API — 兼容三种调用风格
+//  KernelSU / APatch / Magisk Delta exec API — 兼容多种调用风格
 //    1. 新版 kernelsu@3.x:返回 Promise<{errno, stdout, stderr}>
 //    2. 中版同步:返回 {errno, stdout, stderr}
 //    3. 旧版 callback:ksu.exec(cmd, optsJson, callback)
+//
+//  关键: 不同管理器注入的全局对象名不同,必须全部检测:
+//    - KernelSU / APatch (复制自 KernelSU)  → window.KernelSU (首字母大写!)
+//    - KernelSU 别名                          → window.ksu (小写)
+//    - MMRL / 第三方加载器                    → window.ksux / window.mmrl
+//    - APatch 别名                            → window.apatch / window.apd
 // ====================================================================
 const DATA_DIR = '/storage/emulated/0/Android/Aether';
 const MOD_DIR = '/data/adb/modules/aether-optext';
@@ -611,14 +617,38 @@ const CACHE_FILE = DATA_DIR + '/threads_cache';
 const STATUS_FILE = DATA_DIR + '/status.json';
 const PID_FILE = DATA_DIR + '/aether.pid';
 
+// 探测管理器注入的全局对象名 (供诊断显示)
+function detectBridgeName() {
+  const names = [];
+  try { if (typeof KernelSU !== 'undefined' && KernelSU) names.push('KernelSU'); } catch (e) {}
+  try { if (typeof ksu !== 'undefined' && ksu) names.push('ksu'); } catch (e) {}
+  try { if (typeof kernelsu !== 'undefined' && kernelsu) names.push('kernelsu'); } catch (e) {}
+  try { if (typeof ksux !== 'undefined' && ksux) names.push('ksux'); } catch (e) {}
+  try { if (typeof apatch !== 'undefined' && apatch) names.push('apatch'); } catch (e) {}
+  try { if (typeof apd !== 'undefined' && apd) names.push('apd'); } catch (e) {}
+  try { if (typeof mmrl !== 'undefined' && mmrl) names.push('mmrl'); } catch (e) {}
+  return names.length ? names.join(', ') : '(无)';
+}
+
+function getBridge() {
+  // 按优先级检测所有可能的全局对象名
+  // 关键: KernelSU 首字母大写是 APatch/KernelSU 官方注入的对象名
+  const candidates = ['KernelSU', 'ksu', 'kernelsu', 'ksux', 'apatch', 'apd'];
+  for (const name of candidates) {
+    try {
+      const obj = window[name];
+      if (obj && typeof obj.exec === 'function') return { obj, name };
+    } catch (e) {}
+  }
+  return { obj: null, name: null };
+}
+
 function exec(cmd, opts = {}) {
   return new Promise((resolve) => {
-    const fallback = () => resolve({ errno: -1, stdout: '', stderr: 'ksu API 不可用 (需在 KernelSU/APatch/Magisk Delta 管理器中打开)' });
-
-    // 优先使用 ESM 风格的全局对象
-    const ksuObj = (typeof ksu !== 'undefined' && ksu) || (typeof kernelsu !== 'undefined' && kernelsu) || (typeof ksux !== 'undefined' && ksux);
-    if (!ksuObj || typeof ksuObj.exec !== 'function') {
-      fallback();
+    const { obj: ksuObj, name } = getBridge();
+    if (!ksuObj) {
+      const detected = detectBridgeName();
+      resolve({ errno: -1, stdout: '', stderr: `exec API 不可用 (检测到的全局对象: ${detected})。请在 KernelSU/APatch/Magisk Delta 管理器内打开 WebUI,而非浏览器。` });
       return;
     }
 
@@ -634,7 +664,7 @@ function exec(cmd, opts = {}) {
     };
 
     try {
-      // 调用 1:Promise 风格 (kernelsu@3.x)
+      // 调用 1:Promise 风格 (kernelsu@3.x / APatch)
       // exec(cmd) 或 exec(cmd, opts)
       const ret = ksuObj.exec(cmd, opts);
 
@@ -654,19 +684,18 @@ function exec(cmd, opts = {}) {
         done({ errno: parseInt(parts[0]) || 0, stdout: parts.slice(1).join('\n'), stderr: '' });
         return;
       }
-      // 调用 2:旧版 callback 风格 (传第 3 个参数 callback)
-      // 但上一行已经传了 2 个参数,这里没法再传 callback 了
-      // 所以这种情况下 ret === undefined,callback 会通过下方 setTimeout 触发
+      // 调用 2:旧版 callback 风格 (KernelSU 老版本)
+      // 此时 ret === undefined,通过下方 setTimeout 触发 callback 风格
     } catch (e) {
-      // 调用 2 (callback) 抛错时,试试 callback 风格
+      // exec(cmd, opts) 抛错时,试试 callback 风格
       try {
         ksuObj.exec(cmd, JSON.stringify(opts), (stdout, stderr, exitCode) => {
           done({ errno: exitCode ?? 0, stdout: stdout || '', stderr: stderr || '' });
         });
-        setTimeout(() => done({ errno: -1, stdout: '', stderr: '超时 (10s)' }), 10000);
+        setTimeout(() => done({ errno: -1, stdout: '', stderr: `超时 (10s) [${name}]` }), 10000);
         return;
       } catch (e2) {
-        done({ errno: -1, stdout: '', stderr: String(e2) });
+        done({ errno: -1, stdout: '', stderr: `exec 调用失败 [${name}]: ${e2}` });
         return;
       }
     }
@@ -679,10 +708,10 @@ function exec(cmd, opts = {}) {
           done({ errno: exitCode ?? 0, stdout: stdout || '', stderr: stderr || '' });
         });
       } catch (e) {
-        done({ errno: -1, stdout: '', stderr: String(e) });
+        done({ errno: -1, stdout: '', stderr: `callback 风格失败 [${name}]: ${e}` });
       }
       setTimeout(() => {
-        if (!settled) done({ errno: -1, stdout: '', stderr: '超时 (10s) — API 可能不支持' });
+        if (!settled) done({ errno: -1, stdout: '', stderr: `超时 (10s) [${name}] — API 可能不支持` });
       }, 10000);
     }, 0);
   });
@@ -1292,11 +1321,16 @@ try {
     // 在 app 顶部插入红色横幅
     const app = document.querySelector('.app');
     const banner = document.createElement('div');
+    const detected = detectBridgeName();
     banner.style.cssText = 'background:rgba(255,69,58,0.12);color:var(--red);border:1px solid rgba(255,69,58,0.3);padding:12px 16px;border-radius:16px;margin-bottom:12px;font-size:13px;line-height:1.5;';
     banner.innerHTML = `<div style="font-weight:600;margin-bottom:4px;">⚠️ 管理器 exec API 不可用</div>
       <div>WebUI 无法执行 root 命令,所有功能将失效。</div>
-      <div style="margin-top:4px;font-size:12px;opacity:0.85;">原因: ${(r.stderr || '未知').slice(0, 100)}</div>
-      <div style="margin-top:6px;font-size:12px;">请确认: ① 在 KernelSU / APatch / Magisk Delta 管理器内打开 WebUI (而非浏览器); ② 管理器版本支持 WebUI;</div>`;
+      <div style="margin-top:6px;font-size:12px;"><strong>检测到的全局对象:</strong> <code style="background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;">${escapeHtml(detected)}</code></div>
+      <div style="margin-top:4px;font-size:12px;opacity:0.85;">错误: ${(r.stderr || '未知').slice(0, 200)}</div>
+      <div style="margin-top:8px;font-size:12px;">请确认:</div>
+      <div style="margin-top:2px;font-size:12px;padding-left:12px;">① 在 KernelSU / APatch / Magisk Delta 管理器内打开 WebUI (而非浏览器)</div>
+      <div style="margin-top:2px;font-size:12px;padding-left:12px;">② 管理器版本支持 WebUI (KernelSU ≥ 0.7.0,APatch 较新版本)</div>
+      <div style="margin-top:2px;font-size:12px;padding-left:12px;">③ 若检测到 KernelSU/ksu 但仍失败,可能是 WebView JS bridge 延迟注入,稍等几秒后刷新页面</div>`;
     app.insertBefore(banner, app.firstChild);
     return; // 不再加载其他内容,避免一堆错误 toast
   }
